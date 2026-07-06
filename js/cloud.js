@@ -19,6 +19,7 @@ const Cloud = (() => {
   let db = null;
   let user = null;
   let unsubBets = null;
+  let unsubTxs = null;
   let unsubSettings = null;
   let onChange = null;      // rechargement UI (app.js)
   let onStatus = null;      // mise à jour du panneau compte (app.js)
@@ -101,28 +102,59 @@ const Cloud = (() => {
      Synchronisation
      ------------------------------------------------------------------ */
   const betsCol = () => mods.collection(db, 'users', user.uid, 'bets');
+  const txsCol = () => mods.collection(db, 'users', user.uid, 'transactions');
   const settingsDoc = () => mods.doc(db, 'users', user.uid, 'meta', 'settings');
+
+  /** Fusion initiale d'une collection : le plus récent (updatedAt) gagne, sans perte. */
+  async function mergeCollection(colRef, localItems, saveLocal) {
+    const m = mods;
+    const snap = await m.getDocs(colRef);
+    const cloud = new Map();
+    snap.forEach((d) => cloud.set(d.id, d.data()));
+
+    for (const local of localItems) {
+      const remote = cloud.get(local.id);
+      if (!remote || (local.updatedAt || 0) > (remote.updatedAt || 0)) {
+        await m.setDoc(m.doc(colRef, local.id), sanitize(local));
+      }
+    }
+    for (const [id, remote] of cloud) {
+      const local = localItems.find((b) => b.id === id);
+      if (!local || (remote.updatedAt || 0) > (local.updatedAt || 0)) {
+        await saveLocal({ ...remote, id }, { silent: true });
+      }
+    }
+  }
+
+  /** Écoute temps réel d'une collection distante → application locale. */
+  function watchCollection(colRef, getLocal, saveLocal, deleteLocal) {
+    const m = mods;
+    return m.onSnapshot(colRef, async (snap) => {
+      if (snap.metadata.hasPendingWrites) return;
+      let touched = false;
+      for (const ch of snap.docChanges()) {
+        if (ch.type === 'removed') {
+          await deleteLocal(ch.doc.id, { silent: true });
+          touched = true;
+        } else {
+          const remote = { ...ch.doc.data(), id: ch.doc.id };
+          const local = (await getLocal()).find((b) => b.id === remote.id);
+          if (!local || (remote.updatedAt || 0) > (local.updatedAt || 0)) {
+            await saveLocal(remote, { silent: true });
+            touched = true;
+          }
+        }
+      }
+      if (touched) onChange?.();
+    });
+  }
 
   async function startSync() {
     const m = mods;
 
-    // 1. Fusion initiale : le plus récent (updatedAt) gagne, sans perte de données.
-    const [localBets, cloudSnap] = await Promise.all([DB.getBets(), m.getDocs(betsCol())]);
-    const cloud = new Map();
-    cloudSnap.forEach((d) => cloud.set(d.id, d.data()));
-
-    for (const local of localBets) {
-      const remote = cloud.get(local.id);
-      if (!remote || (local.updatedAt || 0) > (remote.updatedAt || 0)) {
-        await m.setDoc(m.doc(betsCol(), local.id), sanitize(local));
-      }
-    }
-    for (const [id, remote] of cloud) {
-      const local = localBets.find((b) => b.id === id);
-      if (!local || (remote.updatedAt || 0) > (local.updatedAt || 0)) {
-        await DB.saveBet({ ...remote, id }, { silent: true });
-      }
-    }
+    // 1. Fusion initiale (paris + transactions).
+    await mergeCollection(betsCol(), await DB.getBets(), DB.saveBet);
+    await mergeCollection(txsCol(), await DB.getTransactions(), DB.saveTransaction);
 
     // Réglages : le cloud fait foi s'il existe, sinon on y pousse le local.
     const sSnap = await m.getDoc(settingsDoc());
@@ -134,24 +166,8 @@ const Cloud = (() => {
     onChange?.();
 
     // 2. Écoute temps réel (les écritures locales en attente sont ignorées).
-    unsubBets = m.onSnapshot(betsCol(), async (snap) => {
-      if (snap.metadata.hasPendingWrites) return;
-      let touched = false;
-      for (const ch of snap.docChanges()) {
-        if (ch.type === 'removed') {
-          await DB.deleteBet(ch.doc.id, { silent: true });
-          touched = true;
-        } else {
-          const remote = { ...ch.doc.data(), id: ch.doc.id };
-          const local = (await DB.getBets()).find((b) => b.id === remote.id);
-          if (!local || (remote.updatedAt || 0) > (local.updatedAt || 0)) {
-            await DB.saveBet(remote, { silent: true });
-            touched = true;
-          }
-        }
-      }
-      if (touched) onChange?.();
-    });
+    unsubBets = watchCollection(betsCol(), DB.getBets, DB.saveBet, DB.deleteBet);
+    unsubTxs = watchCollection(txsCol(), DB.getTransactions, DB.saveTransaction, DB.deleteTransaction);
 
     unsubSettings = m.onSnapshot(settingsDoc(), async (snap) => {
       if (snap.metadata.hasPendingWrites || !snap.exists()) return;
@@ -166,15 +182,22 @@ const Cloud = (() => {
     DB.hooks.afterDeleteBet = (id) => {
       if (isOn()) m.deleteDoc(m.doc(betsCol(), id)).catch(console.warn);
     };
+    DB.hooks.afterSaveTx = (t) => {
+      if (isOn()) m.setDoc(m.doc(txsCol(), t.id), sanitize(t)).catch(console.warn);
+    };
+    DB.hooks.afterDeleteTx = (id) => {
+      if (isOn()) m.deleteDoc(m.doc(txsCol(), id)).catch(console.warn);
+    };
     DB.hooks.afterSetSetting = (key) => {
       if (isOn() && SYNCED_SETTINGS.includes(key)) pushSettings().catch(console.warn);
     };
   }
 
   function stopSync() {
-    unsubBets?.(); unsubSettings?.();
-    unsubBets = unsubSettings = null;
+    unsubBets?.(); unsubTxs?.(); unsubSettings?.();
+    unsubBets = unsubTxs = unsubSettings = null;
     DB.hooks.afterSaveBet = DB.hooks.afterDeleteBet = DB.hooks.afterSetSetting = null;
+    DB.hooks.afterSaveTx = DB.hooks.afterDeleteTx = null;
   }
 
   async function pushSettings() {

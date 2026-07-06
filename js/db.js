@@ -6,7 +6,7 @@
 
 const DB = (() => {
   const NAME = 'betsmart';
-  const VERSION = 1;
+  const VERSION = 2;
   let db = null;
 
   function open() {
@@ -22,6 +22,10 @@ const DB = (() => {
         }
         if (!d.objectStoreNames.contains('settings')) {
           d.createObjectStore('settings', { keyPath: 'key' });
+        }
+        if (!d.objectStoreNames.contains('transactions')) {
+          const t = d.createObjectStore('transactions', { keyPath: 'id' });
+          t.createIndex('date', 'date');
         }
       };
       req.onsuccess = () => { db = req.result; resolve(db); };
@@ -47,7 +51,7 @@ const DB = (() => {
   }
 
   /* ---- Hooks de synchronisation (branchés par cloud.js) ---- */
-  const hooks = { afterSaveBet: null, afterDeleteBet: null, afterSetSetting: null };
+  const hooks = { afterSaveBet: null, afterDeleteBet: null, afterSetSetting: null, afterSaveTx: null, afterDeleteTx: null };
 
   /* ---- Paris ---- */
   async function getBets() {
@@ -78,6 +82,31 @@ const DB = (() => {
     return tx('bets', 'readwrite', (s) => s.clear());
   }
 
+  /* ---- Transactions (dépôts / retraits / bonus) ---- */
+  async function getTransactions() {
+    const d = await open();
+    const req = d.transaction('transactions', 'readonly').objectStore('transactions').getAll();
+    const txs = await reqToPromise(req);
+    return txs.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
+  }
+
+  function saveTransaction(t, opts = {}) {
+    if (!t.id) t.id = crypto.randomUUID();
+    if (!t.createdAt) t.createdAt = Date.now();
+    if (!opts.silent) t.updatedAt = Date.now();
+    return tx('transactions', 'readwrite', (s) => s.put(t)).then(() => {
+      if (!opts.silent) hooks.afterSaveTx?.(t);
+      return t;
+    });
+  }
+
+  function deleteTransaction(id, opts = {}) {
+    return tx('transactions', 'readwrite', (s) => s.delete(id)).then((r) => {
+      if (!opts.silent) hooks.afterDeleteTx?.(id);
+      return r;
+    });
+  }
+
   /* ---- Réglages ---- */
   async function getSetting(key, fallback = null) {
     const d = await open();
@@ -102,9 +131,9 @@ const DB = (() => {
 
   /* ---- Export / Import ---- */
   async function exportAll() {
-    const [bets, settings] = await Promise.all([getBets(), getAllSettings()]);
+    const [bets, settings, transactions] = await Promise.all([getBets(), getAllSettings(), getTransactions()]);
     delete settings.apiKey; // ne jamais exporter la clé API
-    return { app: 'betsmart-ai', version: 1, exportedAt: new Date().toISOString(), settings, bets };
+    return { app: 'betsmart-ai', version: 2, exportedAt: new Date().toISOString(), settings, bets, transactions };
   }
 
   async function importAll(data) {
@@ -112,6 +141,7 @@ const DB = (() => {
       throw new Error('Fichier invalide : export BetSmart AI attendu.');
     }
     for (const bet of data.bets) await saveBet(bet);
+    for (const t of data.transactions || []) await saveTransaction(t);
     if (data.settings) {
       for (const [k, v] of Object.entries(data.settings)) {
         if (k !== 'apiKey') await setSetting(k, v);
@@ -123,8 +153,14 @@ const DB = (() => {
   async function wipe() {
     await clearBets();
     const d = await open();
+    await reqToPromise(d.transaction('transactions', 'readwrite').objectStore('transactions').clear());
     return reqToPromise(d.transaction('settings', 'readwrite').objectStore('settings').clear());
   }
 
-  return { getBets, saveBet, deleteBet, getSetting, setSetting, getAllSettings, exportAll, importAll, wipe, hooks };
+  return {
+    getBets, saveBet, deleteBet,
+    getTransactions, saveTransaction, deleteTransaction,
+    getSetting, setSetting, getAllSettings,
+    exportAll, importAll, wipe, hooks
+  };
 })();

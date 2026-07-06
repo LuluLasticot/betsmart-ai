@@ -700,6 +700,52 @@ kbd {
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 
 /* ==========================================================================
+   Règlement rapide & vérification des résultats
+   ========================================================================== */
+.settle-won { color: var(--accent) !important; }
+.settle-won:hover { background: var(--accent-dim) !important; }
+.settle-lost { color: var(--red) !important; }
+.settle-lost:hover { background: var(--red-dim) !important; }
+
+.settle-panel { border-color: var(--border-strong); }
+.settle-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.settle-row:last-of-type { border-bottom: 0; }
+.settle-row .bet-main { flex: 1; min-width: 0; }
+.settle-score {
+  font: 600 12px var(--mono);
+  color: var(--accent);
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 100px;
+  background: var(--accent-dim);
+}
+.settle-row .bet-meta em { font-style: normal; opacity: 0.75; }
+
+/* Grilles secondaires */
+.odds-grid, .col-headers.odds-grid { grid-template-columns: minmax(0, 1fr) 56px 76px 76px 90px; }
+.tx-grid { grid-template-columns: minmax(0, 1fr) 100px 40px; }
+
+/* Onboarding */
+.onboard-hero { text-align: center; margin-bottom: 20px; }
+.onboard-hero .brand-mark.lg { width: 52px; height: 52px; border-radius: 15px; margin: 6px auto 14px; }
+.onboard-hero .brand-mark.lg svg { width: 26px; height: 26px; }
+.onboard-hero h2 { font-size: 19px; letter-spacing: -0.02em; margin-bottom: 6px; }
+.onboard-hero p { font-size: 13px; color: var(--text-2); }
+#onboardForm .field { margin-bottom: 14px; }
+
+@media (max-width: 600px) {
+  .settle-row { flex-wrap: wrap; }
+  .settle-row .btn-secondary { width: 100%; justify-content: center; }
+  .odds-grid, .col-headers.odds-grid { grid-template-columns: minmax(0, 1fr) 66px 90px; }
+  .odds-grid .bet-num:first-of-type, .odds-grid .bet-profit:nth-of-type(4),
+  .col-headers.odds-grid span:nth-child(2), .col-headers.odds-grid span:nth-child(4) { display: none; }
+}
+
+/* ==========================================================================
    Compte & synchronisation
    ========================================================================== */
 .account-btn {

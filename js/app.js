@@ -10,10 +10,12 @@
   /* ---- État ---- */
   const state = {
     bets: [],
+    txs: [],
     settings: { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash', bookrolls: [] },
     period: 'all',
     view: 'dashboard',
-    charts: {}
+    charts: {},
+    scanQueue: []
   };
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
@@ -31,17 +33,22 @@
   async function init() {
     const saved = await DB.getAllSettings();
     Object.assign(state.settings, saved);
-    state.bets = await DB.getBets();
+    [state.bets, state.txs] = await Promise.all([DB.getBets(), DB.getTransactions()]);
 
     bindNav();
     bindModal();
+    bindTxModal();
     bindFilters();
+    restoreFilters();
     bindSettings();
     bindCoach();
     bindAdvisor();
+    bindSettle();
     bindPaste();
+    maybeOnboard();
 
     renderAll();
+    renderTxList();
 
     // Synchronisation cloud (chargée en arrière-plan, sans bloquer l'affichage)
     bindCloud();
@@ -49,10 +56,11 @@
       onChange: async () => {
         const saved = await DB.getAllSettings();
         Object.assign(state.settings, saved);
-        state.bets = await DB.getBets();
+        [state.bets, state.txs] = await Promise.all([DB.getBets(), DB.getTransactions()]);
         bindSettingsValues();
         renderBookrollRows();
         renderAll();
+        renderTxList();
       },
       onStatus: updateCloudPanel
     });
@@ -228,7 +236,10 @@
      ======================================================================== */
   function renderDashboard() {
     const bets = Stats.inPeriod(state.bets, state.period);
-    const k = Stats.kpis(bets, effInitial());
+    const txs = Stats.inPeriod(state.txs, state.period);
+    const k = Stats.kpis(bets, effInitial(), txs);
+    const series = Stats.bankrollSeries(bets, effInitial(), txs);
+    const dd = Stats.maxDrawdown(series);
 
     $('#dashboardSub').textContent = state.period === 'all'
       ? `${k.count} paris enregistrés · ${k.pendingCount} en attente (${Stats.fmtMoney(k.pendingStake)} engagés)`
@@ -236,25 +247,77 @@
 
     const cls = (n) => (n > 0.001 ? 'pos' : n < -0.001 ? 'neg' : '');
     $('#kpiGrid').innerHTML = [
-      kpiCard('Bankroll', Stats.fmtMoney(k.bankroll), cls(k.profit), `Départ : ${Stats.fmtMoney(effInitial())}`),
+      kpiCard('Bankroll', Stats.fmtMoney(k.bankroll), cls(k.profit), `Investi : ${Stats.fmtMoney(k.invested)}`),
       kpiCard('Bénéfice net', Stats.fmtSigned(k.profit), cls(k.profit), `${Stats.fmtMoney(k.totalStaked)} misés`),
       kpiCard('ROI', Stats.fmtPct(k.roi), cls(k.roi), 'Profit / total misé'),
-      kpiCard('ROC', Stats.fmtPct(k.roc), cls(k.roc), 'Croissance du capital'),
+      kpiCard('ROC', Stats.fmtPct(k.roc), cls(k.roc), 'Profit / capital investi'),
       kpiCard('Hit rate', `${k.hitRate.toFixed(0)} %`, '', `${k.won} gagnés · ${k.lost} perdus`),
-      kpiCard('Cote moy.', k.avgOdds ? k.avgOdds.toFixed(2) : '—', '', `Mise moy. ${Stats.fmtMoney(k.avgStake || 0)}`)
+      kpiCard('Drawdown max', dd.amount > 0 ? `−${Stats.fmtMoney(dd.amount)}` : '—', dd.amount > 0 ? 'neg' : '', dd.amount > 0 ? `Pire chute : −${dd.pct} % du pic` : 'Aucune chute mesurée')
     ].join('');
 
-    renderBankrollChart(bets);
+    renderBankrollChart(series);
     renderDoughnut('sportChart', Stats.groupBy(bets, 'sport'));
     renderBarChart('bookmakerChart', Stats.groupBy(bets, 'bookmaker'));
+    renderMonthlyChart(bets);
+    renderOddsBreakdown(bets);
     renderBookrollPanel();
     renderRecentBets(bets);
     renderSidebarBankroll();
   }
 
+  function renderMonthlyChart(bets) {
+    destroyChart('monthlyChart');
+    const months = Stats.monthlyProfit(bets);
+    const labels = months.map((m) => new Date(m.month + '-01T00:00:00').toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' }));
+    state.charts.monthlyChart = new Chart($('#monthlyChart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          data: months.map((m) => m.profit),
+          backgroundColor: months.map((m) => (m.profit >= 0 ? 'rgba(52,211,153,0.75)' : 'rgba(240,101,95,0.75)')),
+          borderRadius: 5,
+          maxBarThickness: 30
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1d212a', borderColor: '#2e3340', borderWidth: 1, padding: 10, displayColors: false,
+            callbacks: { label: (item) => Stats.fmtSigned(item.parsed.y) }
+          }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: chartDefaults.color, font: chartDefaults.font }, border: { color: chartDefaults.borderColor } },
+          y: { grid: { color: 'rgba(34,38,47,0.6)' }, ticks: { color: chartDefaults.color, font: chartDefaults.font, callback: (v) => Stats.fmtMoney(v) }, border: { display: false } }
+        }
+      }
+    });
+  }
+
+  function renderOddsBreakdown(bets) {
+    const rows = Stats.oddsBreakdown(bets);
+    $('#oddsBreakdown').innerHTML = rows.length
+      ? `<div class="col-headers odds-grid"><span>Cotes</span><span class="r">Paris</span><span class="r">Réussite</span><span class="r">ROI</span><span class="r">P/L</span></div>`
+        + rows.map((r) => {
+          const cls = r.profit > 0.001 ? 'pos' : r.profit < -0.001 ? 'neg' : 'zero';
+          return `<div class="bet-row odds-grid">
+            <div class="bet-event">${r.label}</div>
+            <div class="bet-num">${r.count}</div>
+            <div class="bet-num">${r.hitRate.toFixed(0)} %</div>
+            <div class="bet-profit ${cls}">${Stats.fmtPct(r.roi)}</div>
+            <div class="bet-profit ${cls}">${Stats.fmtSigned(r.profit)}</div>
+          </div>`;
+        }).join('')
+      : '<div class="empty-state"><p>Réglez quelques paris pour voir où vos cotes sont rentables.</p></div>';
+  }
+
   /** Détail de bankroll par bookmaker (toujours sur l'ensemble de l'historique). */
   function renderBookrollPanel() {
-    const rows = Stats.bookmakerBreakdown(state.bets, state.settings.bookrolls || []);
+    const rows = Stats.bookmakerBreakdown(state.bets, state.settings.bookrolls || [], state.txs);
     const panel = $('#bookrollPanel');
     if (!rows.length) { panel.hidden = true; return; }
     panel.hidden = false;
@@ -264,7 +327,7 @@
       + rows.map((r) => {
         const cls = r.profit > 0.001 ? 'pos' : r.profit < -0.001 ? 'neg' : 'zero';
         return `<div class="bet-row bookroll-grid">
-          <div class="bet-main"><div class="bet-event">${escapeHTML(r.name)}</div>${!r.hasInitial ? '<div class="bet-meta">capital de départ non renseigné</div>' : (r.pendingStake > 0 ? `<div class="bet-meta">${Stats.fmtMoney(r.pendingStake)} en attente</div>` : '')}</div>
+          <div class="bet-main"><div class="bet-event">${escapeHTML(r.name)}</div>${!r.hasInitial ? '<div class="bet-meta">capital de départ non renseigné</div>' : `<div class="bet-meta">${[r.moves !== 0 ? `${Stats.fmtSigned(r.moves)} de mouvements` : '', r.pendingStake > 0 ? `${Stats.fmtMoney(r.pendingStake)} en attente` : ''].filter(Boolean).join(' · ') || '&nbsp;'}</div>`}</div>
           <div class="bet-num hide-m">${r.count}</div>
           <div class="bet-num hide-m">${r.hasInitial ? Stats.fmtMoney(r.initial) : '—'}</div>
           <div class="bet-profit ${cls}">${Stats.fmtSigned(r.profit)}</div>
@@ -279,7 +342,7 @@
   }
 
   function renderSidebarBankroll() {
-    const k = Stats.kpis(state.bets, effInitial());
+    const k = Stats.kpis(state.bets, effInitial(), state.txs);
     $('#sidebarBankroll').textContent = Stats.fmtMoney(k.bankroll);
     $('#sidebarBankroll').style.color = k.profit > 0 ? 'var(--accent)' : k.profit < 0 ? 'var(--red)' : 'var(--text)';
   }
@@ -295,10 +358,9 @@
     if (state.charts[id]) { state.charts[id].destroy(); delete state.charts[id]; }
   }
 
-  function renderBankrollChart(bets) {
+  function renderBankrollChart(points) {
     destroyChart('bankroll');
     const ctx = $('#bankrollChart').getContext('2d');
-    const points = Stats.bankrollSeries(bets, effInitial());
     const labels = points.map((p) => p.x);
     const values = points.map((p) => p.y);
     const up = values[values.length - 1] >= values[0];
@@ -431,15 +493,35 @@
   /* ========================================================================
      Liste des paris
      ======================================================================== */
+  const FILTER_IDS = ['filterStatus', 'filterSport', 'filterBookmaker', 'filterType', 'filterTipster'];
+
   function bindFilters() {
-    ['filterStatus', 'filterSport', 'filterBookmaker', 'filterType'].forEach((id) =>
-      $(`#${id}`).addEventListener('change', renderBets));
+    FILTER_IDS.forEach((id) =>
+      $(`#${id}`).addEventListener('change', () => { persistFilters(); renderBets(); }));
     $('#filterSearch').addEventListener('input', debounce(renderBets, 180));
+  }
+
+  function persistFilters() {
+    try {
+      localStorage.setItem('betFilters', JSON.stringify(Object.fromEntries(FILTER_IDS.map((id) => [id, $(`#${id}`).value]))));
+    } catch (_) { /* stockage indisponible */ }
+  }
+
+  function restoreFilters() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('betFilters') || '{}');
+      refreshFilterOptions();
+      for (const [id, v] of Object.entries(saved)) if ($(`#${id}`)) $(`#${id}`).value = v;
+    } catch (_) { /* ignore */ }
   }
 
   function refreshFilterOptions() {
     fillOptions('#filterSport', 'Sport · tous', [...new Set(state.bets.map((b) => b.sport).filter(Boolean))].sort());
     fillOptions('#filterBookmaker', 'Bookmaker · tous', [...new Set(state.bets.map((b) => b.bookmaker).filter(Boolean))].sort());
+    const tipsters = [...new Set(state.bets.map((b) => b.tipster).filter(Boolean))].sort();
+    $('#filterTipster').parentElement && ($('#filterTipster').style.display = tipsters.length ? '' : 'none');
+    fillOptions('#filterTipster', 'Tipster · tous', tipsters);
+    $('#tipsterList').innerHTML = tipsters.map((t) => `<option>${escapeHTML(t)}</option>`).join('');
   }
 
   function fillOptions(sel, placeholder, values) {
@@ -454,6 +536,7 @@
     const sport = $('#filterSport').value;
     const bookmaker = $('#filterBookmaker').value;
     const type = $('#filterType').value;
+    const tipster = $('#filterTipster').value;
     const q = $('#filterSearch').value.trim().toLowerCase();
 
     return state.bets.filter((b) =>
@@ -461,7 +544,8 @@
       (!sport || b.sport === sport) &&
       (!bookmaker || b.bookmaker === bookmaker) &&
       (!type || b.betType === type) &&
-      (!q || `${b.event} ${b.selection} ${b.competition || ''}`.toLowerCase().includes(q))
+      (!tipster || b.tipster === tipster) &&
+      (!q || `${b.event} ${b.selection} ${b.competition || ''} ${b.tipster || ''}`.toLowerCase().includes(q))
     );
   }
 
@@ -476,6 +560,17 @@
         + bets.map(betRowHTML).join('')
       : '<div class="empty-state"><p>Aucun pari ne correspond à ces filtres.</p></div>';
     bindBetRowActions($('#betsList'));
+
+    // Bouton de vérification IA des résultats
+    const overdue = pendingOverdue();
+    $('#checkResults').hidden = overdue.length === 0;
+    $('#checkResultsLabel').textContent = `Vérifier les résultats (${overdue.length})`;
+  }
+
+  /** Paris en attente dont la date est aujourd'hui ou passée. */
+  function pendingOverdue() {
+    const today = new Date().toISOString().slice(0, 10);
+    return state.bets.filter((b) => b.status === 'pending' && b.date <= today);
   }
 
   function betRowHTML(b) {
@@ -495,25 +590,214 @@
       <div class="bet-num strong hide-m">${Stats.fmtMoney(Number(b.stake))}</div>
       <div class="bet-profit ${profitCls}">${b.status === 'pending' ? `<span class="badge pending">${STATUS_LABELS.pending}</span>` : profitTxt}</div>
       <div class="bet-actions">
-        <button class="btn-icon" data-action="edit" aria-label="Modifier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>
+        ${b.status === 'pending' ? `
+        <button class="btn-icon settle-won" data-action="won" aria-label="Marquer gagné" title="Gagné"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>
+        <button class="btn-icon settle-lost" data-action="lost" aria-label="Marquer perdu" title="Perdu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>` : `
+        <button class="btn-icon" data-action="edit" aria-label="Modifier"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg></button>`}
         <button class="btn-icon" data-action="delete" aria-label="Supprimer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
       </div>
     </div>`;
   }
 
+  async function settleBet(id, status) {
+    const bet = state.bets.find((b) => b.id === id);
+    if (!bet) return;
+    bet.status = status;
+    const saved = await DB.saveBet(bet);
+    state.bets = state.bets.map((b) => (b.id === saved.id ? saved : b));
+    renderAll();
+    toast(status === 'won' ? `Gagné ✓ ${Stats.fmtSigned(Stats.profit(saved))}` : status === 'lost' ? `Perdu · ${Stats.fmtSigned(Stats.profit(saved))}` : 'Pari annulé');
+  }
+
   function bindBetRowActions(container) {
     container.querySelectorAll('.bet-row').forEach((row) => {
       const id = row.dataset.id;
-      row.querySelector('[data-action="edit"]').addEventListener('click', (e) => { e.stopPropagation(); openBetModal(state.bets.find((b) => b.id === id)); });
-      row.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (!confirm('Supprimer ce pari ?')) return;
-        await DB.deleteBet(id);
-        state.bets = state.bets.filter((b) => b.id !== id);
-        renderAll();
-        toast('Pari supprimé');
+      row.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const action = btn.dataset.action;
+          if (action === 'edit') openBetModal(state.bets.find((b) => b.id === id));
+          else if (action === 'won' || action === 'lost') settleBet(id, action);
+          else if (action === 'delete') {
+            if (!confirm('Supprimer ce pari ?')) return;
+            await DB.deleteBet(id);
+            state.bets = state.bets.filter((b) => b.id !== id);
+            renderAll();
+            toast('Pari supprimé');
+          }
+        });
       });
       row.addEventListener('click', () => openBetModal(state.bets.find((b) => b.id === id)));
+    });
+  }
+
+  /* ========================================================================
+     Dépôts / retraits
+     ======================================================================== */
+  function bindTxModal() {
+    $('#addMovement').addEventListener('click', () => openTxModal());
+    $('#addMovementSettings').addEventListener('click', () => openTxModal());
+    $('#closeTxModal').addEventListener('click', closeTxModal);
+    $('#cancelTx').addEventListener('click', closeTxModal);
+    $('#txModal').addEventListener('click', (e) => { if (e.target === $('#txModal')) closeTxModal(); });
+
+    $('#txForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const t = {
+        type: $('#txType').value,
+        bookmaker: $('#txBookmaker').value.trim(),
+        amount: parseFloat($('#txAmount').value),
+        date: $('#txDate').value
+      };
+      if (!(t.amount > 0)) return;
+      const saved = await DB.saveTransaction(t);
+      state.txs.unshift(saved);
+      state.txs.sort((a, b) => (a.date < b.date ? 1 : -1));
+      closeTxModal();
+      renderAll();
+      renderTxList();
+      toast(t.type === 'retrait' ? `Retrait de ${Stats.fmtMoney(t.amount)} enregistré` : `${t.type === 'depot' ? 'Dépôt' : 'Bonus'} de ${Stats.fmtMoney(t.amount)} enregistré`);
+    });
+  }
+
+  function openTxModal() {
+    refreshBookmakerDatalist();
+    $('#txDate').value = new Date().toISOString().slice(0, 10);
+    $('#txAmount').value = '';
+    $('#txModal').hidden = false;
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeTxModal() {
+    $('#txModal').hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  function renderTxList() {
+    const TYPE_TX = { depot: 'Dépôt', retrait: 'Retrait', bonus: 'Bonus' };
+    $('#txList').innerHTML = state.txs.length
+      ? state.txs.slice(0, 30).map((t) => {
+          const sign = t.type === 'retrait' ? -1 : 1;
+          const cls = sign > 0 ? 'pos' : 'neg';
+          return `<div class="bet-row tx-grid" data-id="${t.id}">
+            <div class="bet-main"><div class="bet-event">${TYPE_TX[t.type] || t.type} · ${escapeHTML(t.bookmaker || '—')}</div>
+            <div class="bet-meta">${new Date(t.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}</div></div>
+            <div class="bet-profit ${cls}">${Stats.fmtSigned(sign * t.amount)}</div>
+            <div class="bet-actions"><button class="btn-icon" data-deltx aria-label="Supprimer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button></div>
+          </div>`;
+        }).join('')
+      : '<p class="field-hint">Aucun mouvement enregistré. Les dépôts et retraits ajustent votre bankroll sans fausser le ROI.</p>';
+
+    $$('#txList [data-deltx]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = btn.closest('.bet-row').dataset.id;
+        if (!confirm('Supprimer ce mouvement ?')) return;
+        await DB.deleteTransaction(id);
+        state.txs = state.txs.filter((t) => t.id !== id);
+        renderAll();
+        renderTxList();
+        toast('Mouvement supprimé');
+      });
+    });
+  }
+
+  /* ========================================================================
+     Premiers pas
+     ======================================================================== */
+  async function maybeOnboard() {
+    const done = await DB.getSetting('onboarded', false);
+    if (done || state.bets.length > 0) return;
+    $('#onboardModal').hidden = false;
+    document.body.style.overflow = 'hidden';
+
+    $('#onboardForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      state.settings.initialBankroll = parseFloat($('#obBankroll').value) || 0;
+      await DB.setSetting('initialBankroll', state.settings.initialBankroll);
+      const key = $('#obApiKey').value.trim();
+      if (key) {
+        state.settings.apiKey = key;
+        await DB.setSetting('apiKey', key);
+      }
+      await DB.setSetting('onboarded', true);
+      $('#onboardModal').hidden = true;
+      document.body.style.overflow = '';
+      bindSettingsValues();
+      renderAll();
+      toast('Bienvenue ! Ajoutez votre premier pari avec le bouton +');
+    }, { once: true });
+  }
+
+  /* ========================================================================
+     Vérification automatique des résultats (IA)
+     ======================================================================== */
+  function bindSettle() {
+    $('#checkResults').addEventListener('click', runSettleCheck);
+  }
+
+  async function runSettleCheck() {
+    if (!state.settings.apiKey) { toast('Ajoutez votre clé API Gemini dans les Réglages'); return; }
+    const pending = pendingOverdue().slice(0, 15); // limite raisonnable par appel
+    if (!pending.length) return;
+
+    const btn = $('#checkResults');
+    btn.disabled = true;
+    $('#settleResults').innerHTML = '<div class="coach-loading"><span class="spinner"></span>Recherche des résultats en cours… (~30 s)</div>';
+
+    try {
+      const results = await Settle.check(state.settings.apiKey, state.settings.model, pending);
+      renderSettleResults(results, pending);
+    } catch (err) {
+      $('#settleResults').innerHTML = `<div class="scan-error">Vérification impossible : ${escapeHTML(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderSettleResults(results, pending) {
+    const actionable = results.filter((r) => ['won', 'lost', 'void'].includes(r.statut));
+    const waiting = results.filter((r) => r.statut === 'not_played').length;
+    const unknown = results.filter((r) => r.statut === 'unknown').length;
+
+    if (!actionable.length) {
+      $('#settleResults').innerHTML = `<div class="market-note">Aucun résultat exploitable pour l'instant${waiting ? ` — ${waiting} match(s) pas encore terminé(s)` : ''}${unknown ? `, ${unknown} introuvable(s)` : ''}.</div>`;
+      return;
+    }
+
+    const label = { won: 'Gagné', lost: 'Perdu', void: 'Annulé' };
+    $('#settleResults').innerHTML = `<div class="panel settle-panel">
+      <div class="panel-head">
+        <h2>Résultats trouvés — à confirmer</h2>
+        <button class="btn-primary" id="settleAll">Tout confirmer (${actionable.length})</button>
+      </div>
+      ${actionable.map((r) => {
+        const bet = pending.find((b) => b.id === r.id);
+        return `<div class="settle-row" data-id="${r.id}" data-status="${r.statut}">
+          <div class="bet-main">
+            <div class="bet-event">${escapeHTML(bet.event)} ${r.score ? `<span class="settle-score">${escapeHTML(r.score)}</span>` : ''}</div>
+            <div class="bet-meta">${escapeHTML(bet.selection)} · ${escapeHTML(r.explication || '')}${r.source ? ` · <em>${escapeHTML(r.source)}</em>` : ''}</div>
+          </div>
+          <span class="badge ${r.statut === 'void' ? 'void' : r.statut}">${label[r.statut]}</span>
+          <button class="btn-secondary settle-confirm">Confirmer</button>
+        </div>`;
+      }).join('')}
+      <p class="field-hint" style="margin-top:10px">Vérifiez le score avant de confirmer : l'IA peut se tromper sur un marché précis.</p>
+    </div>`;
+
+    $$('#settleResults .settle-confirm').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const row = btn.closest('.settle-row');
+        await settleBet(row.dataset.id, row.dataset.status);
+        row.remove();
+        if (!$('#settleResults .settle-row')) $('#settleResults').innerHTML = '';
+      });
+    });
+    $('#settleAll').addEventListener('click', async () => {
+      for (const row of $$('#settleResults .settle-row')) {
+        await settleBet(row.dataset.id, row.dataset.status);
+      }
+      $('#settleResults').innerHTML = '';
+      toast(`${actionable.length} paris réglés ✓`);
     });
   }
 
@@ -542,7 +826,13 @@
     dz.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#fileInput').click(); } });
     $('#browseBtn').addEventListener('click', (e) => { e.stopPropagation(); $('#fileInput').click(); });
     $('#photosBtn').addEventListener('click', (e) => { e.stopPropagation(); $('#fileInput').click(); });
-    $('#fileInput').addEventListener('change', (e) => { if (e.target.files[0]) handleTicketImage(e.target.files[0]); });
+    $('#fileInput').addEventListener('change', (e) => {
+      const files = [...e.target.files].filter((f) => f.type.startsWith('image/'));
+      if (!files.length) return;
+      state.scanQueue.push(...files.slice(1)); // les suivants seront traités après chaque validation
+      if (files.length > 1) toast(`${files.length} tickets — scan un par un, validez entre chaque`);
+      handleTicketImage(files[0]);
+    });
 
     // Coller depuis le presse-papier via l'API Clipboard (indispensable sur
     // iOS/Android où l'événement "paste" ne se déclenche pas hors champ texte).
@@ -610,6 +900,7 @@
     $('#legsField').hidden = ($('#fType').value === 'simple');
     $('#fOdds').value = bet?.odds ?? '';
     $('#fStake').value = bet?.stake ?? '';
+    $('#fTipster').value = bet?.tipster || '';
     $('#fStatus').value = bet?.status || 'pending';
     $('#fPayout').value = bet?.payout ?? '';
     $('#payoutField').hidden = $('#fStatus').value !== 'cashout';
@@ -655,12 +946,19 @@
       legs: $('#fType').value === 'simple' ? 1 : Math.max(2, parseInt($('#fLegs').value, 10) || 2),
       odds: parseFloat($('#fOdds').value),
       stake: parseFloat($('#fStake').value),
+      tipster: $('#fTipster').value.trim() || undefined,
       status: $('#fStatus').value,
       payout: $('#fStatus').value === 'cashout' ? (parseFloat($('#fPayout').value) || 0) : undefined
     };
 
     const existing = bet.id ? state.bets.find((b) => b.id === bet.id) : null;
     if (existing) bet.createdAt = existing.createdAt;
+
+    // Garde-fou anti-tilt : mise anormale après des pertes consécutives
+    if (!existing) {
+      const warning = Stats.tiltCheck(state.bets, bet);
+      if (warning && !confirm(`⚠️ ${warning}\n\nEnregistrer quand même ?`)) return;
+    }
 
     const saved = await DB.saveBet(bet);
     if (existing) {
@@ -672,6 +970,14 @@
     closeBetModal();
     renderAll();
     toast(existing ? 'Pari mis à jour' : 'Pari enregistré ✓');
+
+    // File de scans multiples : on enchaîne sur le ticket suivant
+    if (state.scanQueue.length) {
+      const next = state.scanQueue.shift();
+      openBetModal();
+      toast(`Ticket suivant (${state.scanQueue.length + 1} restants)…`);
+      handleTicketImage(next);
+    }
   }
 
   /* ========================================================================
@@ -772,7 +1078,7 @@
     container.innerHTML = '<div class="coach-loading"><span class="spinner"></span>Gemini analyse votre historique…</div>';
 
     try {
-      const summary = Stats.coachSummary(state.bets, effInitial());
+      const summary = Stats.coachSummary(state.bets, effInitial(), state.txs);
       const insights = await Gemini.coach(state.settings.apiKey, state.settings.model, summary);
       container.innerHTML = insights.map(insightHTML).join('')
         + `<p class="empty-hint" style="text-align:center;margin-top:16px">Analyse générée le ${new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} · ${settled.length} paris analysés</p>`;
@@ -814,7 +1120,7 @@
     btn.disabled = true;
     container.innerHTML = '<div class="coach-loading"><span class="spinner"></span>Recherche Google en cours : matchs, blessures, forme, cotes… (~30 s)</div>';
 
-    const k = Stats.kpis(state.bets, effInitial());
+    const k = Stats.kpis(state.bets, effInitial(), state.txs);
     const perf = Stats.groupBy(state.bets, 'sport')
       .filter((g) => g.count >= 3)
       .map((g) => `${g.name}: ROI ${g.roi.toFixed(0)} % sur ${g.count} paris`)

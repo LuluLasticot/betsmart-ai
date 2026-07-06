@@ -120,9 +120,23 @@
         <div class="panel" id="bookrollPanel" hidden>
           <div class="panel-head">
             <h2>Bankroll par bookmaker</h2>
-            <button class="btn-ghost" data-goto="settings">Gérer →</button>
+            <div>
+              <button class="btn-ghost" id="addMovement">+ Dépôt / Retrait</button>
+              <button class="btn-ghost" data-goto="settings">Gérer →</button>
+            </div>
           </div>
           <div id="bookrollList"></div>
+        </div>
+
+        <div class="panel-row">
+          <div class="panel">
+            <div class="panel-head"><h2>Mois par mois</h2></div>
+            <div class="chart-wrap sm"><canvas id="monthlyChart"></canvas></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>Par tranche de cotes</h2></div>
+            <div id="oddsBreakdown"></div>
+          </div>
         </div>
 
         <div class="panel">
@@ -141,7 +155,12 @@
             <h1>Mes paris</h1>
             <p class="view-sub" id="betsCount">—</p>
           </div>
+          <button class="btn-primary" id="checkResults" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><path d="M22 4L12 14l-3-3"/></svg>
+            <span id="checkResultsLabel">Vérifier les résultats</span>
+          </button>
         </header>
+        <div id="settleResults"></div>
 
         <div class="filters" id="betFilters">
           <select id="filterStatus" class="select">
@@ -160,6 +179,7 @@
             <option value="combine">Combiné</option>
             <option value="systeme">Système</option>
           </select>
+          <select id="filterTipster" class="select"><option value="">Tipster · tous</option></select>
           <input type="search" id="filterSearch" class="input search" placeholder="Rechercher un match, une équipe…">
         </div>
 
@@ -309,6 +329,14 @@
         </div>
 
         <div class="panel settings-panel">
+          <div class="panel-head">
+            <h2>Dépôts & retraits</h2>
+            <button class="btn-ghost" id="addMovementSettings">+ Ajouter</button>
+          </div>
+          <div id="txList"><p class="field-hint">Aucun mouvement enregistré. Les dépôts et retraits ajustent votre bankroll sans fausser le ROI.</p></div>
+        </div>
+
+        <div class="panel settings-panel">
           <div class="panel-head"><h2>Données</h2></div>
           <div class="settings-actions">
             <button class="btn-secondary" id="exportData">Exporter (JSON)</button>
@@ -378,7 +406,7 @@
               Depuis Photos
             </button>
           </div>
-          <input type="file" id="fileInput" accept="image/*" hidden>
+          <input type="file" id="fileInput" accept="image/*" multiple hidden>
         </div>
         <div class="dropzone-inner scanning" id="dropzoneScanning" hidden>
           <div class="scan-preview"><img id="scanPreview" alt="Ticket en cours d'analyse"></div>
@@ -448,6 +476,11 @@
             <input type="number" id="fStake" class="input mono" min="0.1" step="0.01" placeholder="50" required>
           </div>
           <div class="field">
+            <label for="fTipster">Tipster <span class="opt">optionnel</span></label>
+            <input type="text" id="fTipster" class="input" list="tipsterList" placeholder="Perso, nom du prono…">
+            <datalist id="tipsterList"></datalist>
+          </div>
+          <div class="field">
             <label for="fStatus">Statut</label>
             <select id="fStatus" class="select full">
               <option value="pending">En attente</option>
@@ -467,6 +500,70 @@
           <button type="button" class="btn-secondary" id="cancelBet">Annuler</button>
           <button type="submit" class="btn-primary" id="saveBet">Valider le pari</button>
         </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Modal : dépôt / retrait ===== -->
+  <div class="modal-backdrop" id="txModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="txModalTitle">
+      <div class="modal-head">
+        <h2 id="txModalTitle">Dépôt / Retrait</h2>
+        <button class="btn-icon" id="closeTxModal" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <form id="txForm">
+        <div class="field">
+          <label for="txType">Type de mouvement</label>
+          <select id="txType" class="select full">
+            <option value="depot">Dépôt (argent ajouté)</option>
+            <option value="retrait">Retrait (argent récupéré)</option>
+            <option value="bonus">Bonus / Freebet crédité</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="txBookmaker">Bookmaker</label>
+          <input type="text" id="txBookmaker" class="input" list="bookmakerList" placeholder="Winamax" required>
+        </div>
+        <div class="field">
+          <label for="txAmount">Montant (€)</label>
+          <input type="number" id="txAmount" class="input mono" min="0.01" step="0.01" placeholder="100" required>
+        </div>
+        <div class="field">
+          <label for="txDate">Date</label>
+          <input type="date" id="txDate" class="input" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="cancelTx">Annuler</button>
+          <button type="submit" class="btn-primary">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Modal : premiers pas ===== -->
+  <div class="modal-backdrop" id="onboardModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="onboardTitle">
+      <div class="onboard-hero">
+        <div class="brand-mark lg" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>
+        </div>
+        <h2 id="onboardTitle">Bienvenue sur BetSmart AI</h2>
+        <p>Suivez votre bankroll, scannez vos tickets, laissez l'IA analyser vos paris.</p>
+      </div>
+      <form id="onboardForm">
+        <div class="field">
+          <label for="obBankroll">Votre bankroll de départ (€)</label>
+          <input type="number" id="obBankroll" class="input mono" min="0" step="0.01" placeholder="500" required>
+          <p class="field-hint">Le total que vous avez actuellement chez vos bookmakers. Vous pourrez ensuite le détailler book par book dans les Réglages.</p>
+        </div>
+        <div class="field">
+          <label for="obApiKey">Clé API Gemini <span class="opt">optionnel, activable plus tard</span></label>
+          <input type="password" id="obApiKey" class="input" placeholder="AIza…" autocomplete="off">
+          <p class="field-hint">Débloque le scan de tickets, le Coach et le Radar. Gratuite sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</p>
+        </div>
+        <button type="submit" class="btn-primary auth-submit">Commencer</button>
       </form>
     </div>
   </div>
@@ -518,6 +615,7 @@
   <script src="js/cloud.js"></script>
   <script src="js/stats.js"></script>
   <script src="js/gemini.js"></script>
+  <script src="js/settle.js"></script>
   <script src="js/advisor.js"></script>
   <script src="js/app.js"></script>
 </body>

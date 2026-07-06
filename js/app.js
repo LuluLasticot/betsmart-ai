@@ -58,20 +58,39 @@
     });
 
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      // updateViaCache:'none' garantit que les nouvelles versions arrivent dès le rechargement
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
     }
   }
 
   /* ========================================================================
      Compte & synchronisation cloud
      ======================================================================== */
+  let cloudState = { state: 'loading' };
+  let authMode = 'signin';
+
   function updateCloudPanel(status) {
+    const wasConnected = cloudState.state === 'connected';
+    cloudState = status;
+
+    // Réglages
     $('#cloudUnconfigured').hidden = status.state !== 'unconfigured' && status.state !== 'error';
     $('#cloudSignedOut').hidden = status.state !== 'signedout';
     $('#cloudSignedIn').hidden = status.state !== 'connected';
+
+    // Sidebar
+    const canAuth = status.state === 'signedout' || status.state === 'connected';
+    $('#sidebarAccount').style.display = canAuth ? '' : 'none';
+    $('#sidebarAccountLabel').textContent = status.state === 'connected' ? status.email : 'Se connecter';
+    $('#sidebarAccountDot').hidden = status.state !== 'connected';
+
+    // Bannière dashboard (masquable pour la session)
+    $('#syncBanner').hidden = !(status.state === 'signedout' && !sessionStorage.getItem('hideSyncBanner'));
+
     if (status.state === 'connected') {
       $('#cloudUserEmail').textContent = status.email;
-      toast('Synchronisation cloud active');
+      closeAuthModal();
+      if (!wasConnected) toast('Synchronisation active ✓');
     }
     if (status.state === 'error') {
       const el = $('#cloudError');
@@ -80,26 +99,98 @@
     }
   }
 
+  function openAuthModal(mode = 'signin') {
+    if (cloudState.state === 'connected') { showView('settings'); return; }
+    setAuthMode(mode);
+    $('#authError').hidden = true;
+    $('#authModal').hidden = false;
+    document.body.style.overflow = 'hidden';
+    $('#authEmail').focus();
+  }
+
+  function closeAuthModal() {
+    if ($('#authModal').hidden) return;
+    $('#authModal').hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    $('#tabSignIn').classList.toggle('active', mode === 'signin');
+    $('#tabSignUp').classList.toggle('active', mode === 'signup');
+    $('#authConfirmField').hidden = mode === 'signin';
+    $('#authSubmit').textContent = mode === 'signin' ? 'Se connecter' : 'Créer mon compte';
+    $('#authIntro').textContent = mode === 'signin'
+      ? 'Retrouvez vos paris synchronisés sur cet appareil.'
+      : 'Vos paris et réglages seront synchronisés en temps réel sur tous vos appareils.';
+    $('#authPassword').autocomplete = mode === 'signin' ? 'current-password' : 'new-password';
+  }
+
+  function showAuthError(msg) {
+    const el = $('#authError');
+    el.textContent = msg;
+    el.hidden = false;
+  }
+
   function bindCloud() {
-    const errEl = $('#cloudError');
-    const showErr = (err) => { errEl.textContent = Cloud.friendlyError(err); errEl.className = 'api-test ko'; };
-    const clearErr = () => { errEl.textContent = ''; };
+    // Points d'entrée
+    $('#sidebarAccount').addEventListener('click', () => openAuthModal('signin'));
+    $('#cloudOpenAuth').addEventListener('click', () => openAuthModal('signin'));
+    $('#syncBannerBtn').addEventListener('click', () => openAuthModal('signup'));
+    $('#syncBannerClose').addEventListener('click', () => {
+      sessionStorage.setItem('hideSyncBanner', '1');
+      $('#syncBanner').hidden = true;
+    });
 
-    const withBusy = (btn, fn) => async () => {
-      clearErr();
-      const email = $('#cloudEmail').value.trim();
-      const password = $('#cloudPassword').value;
-      if (!email || !password) { showErr({ code: 'auth/invalid-credential' }); return; }
+    // Modal
+    $('#closeAuthModal').addEventListener('click', closeAuthModal);
+    $('#authModal').addEventListener('click', (e) => { if (e.target === $('#authModal')) closeAuthModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#authModal').hidden) closeAuthModal(); });
+    $('#tabSignIn').addEventListener('click', () => setAuthMode('signin'));
+    $('#tabSignUp').addEventListener('click', () => setAuthMode('signup'));
+
+    $('#authForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      $('#authError').hidden = true;
+      const email = $('#authEmail').value.trim();
+      const password = $('#authPassword').value;
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showAuthError('Adresse email invalide.');
+      if (password.length < 6) return showAuthError('Mot de passe trop court (6 caractères minimum).');
+      if (authMode === 'signup' && password !== $('#authConfirm').value) return showAuthError('Les deux mots de passe ne correspondent pas.');
+
+      const btn = $('#authSubmit');
       btn.disabled = true;
-      try { await fn(email, password); } catch (err) { showErr(err); } finally { btn.disabled = false; }
-    };
+      btn.textContent = authMode === 'signin' ? 'Connexion…' : 'Création du compte…';
+      try {
+        if (authMode === 'signin') await Cloud.signIn(email, password);
+        else await Cloud.signUp(email, password);
+        // updateCloudPanel('connected') ferme la modal et affiche le toast
+      } catch (err) {
+        showAuthError(Cloud.friendlyError(err));
+      } finally {
+        btn.disabled = false;
+        setAuthMode(authMode);
+      }
+    });
 
-    $('#cloudSignIn').addEventListener('click', withBusy($('#cloudSignIn'), Cloud.signIn));
-    $('#cloudSignUp').addEventListener('click', withBusy($('#cloudSignUp'), Cloud.signUp));
+    $('#authForgot').addEventListener('click', async () => {
+      const email = $('#authEmail').value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showAuthError('Entrez d\'abord votre email ci-dessus, puis recliquez.');
+      try {
+        await Cloud.resetPassword(email);
+        $('#authError').hidden = true;
+        toast(`Email de réinitialisation envoyé à ${email}`);
+      } catch (err) {
+        showAuthError(Cloud.friendlyError(err));
+      }
+    });
+
+    // Déconnexion (Réglages)
     $('#cloudSignOut').addEventListener('click', async () => {
-      clearErr();
+      if (!confirm('Se déconnecter ? Les données restent sur cet appareil et dans le cloud.')) return;
       await Cloud.signOutUser();
-      toast('Déconnecté — les données restent sur cet appareil');
+      toast('Déconnecté');
     });
   }
 

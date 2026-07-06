@@ -92,6 +92,11 @@ const Cloud = (() => {
     await m.signOut(auth);
   }
 
+  async function resetPassword(email) {
+    const m = await load();
+    await m.sendPasswordResetEmail(auth, email);
+  }
+
   /* ------------------------------------------------------------------
      Synchronisation
      ------------------------------------------------------------------ */
@@ -208,5 +213,5 @@ const Cloud = (() => {
     return map[code] || err?.message || 'Erreur inconnue.';
   }
 
-  return { init, signUp, signIn, signOutUser, isConfigured, isOn, friendlyError };
+  return { init, signUp, signIn, signOutUser, resetPassword, isConfigured, isOn, friendlyError };
 })();

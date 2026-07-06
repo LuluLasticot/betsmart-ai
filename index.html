@@ -60,6 +60,11 @@
           <span class="mini-bankroll-label">Bankroll</span>
           <span class="mini-bankroll-value" id="sidebarBankroll">—</span>
         </div>
+        <button class="account-btn" id="sidebarAccount">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6 8-6s8 2 8 6"/></svg>
+          <span id="sidebarAccountLabel">Se connecter</span>
+          <span class="cloud-dot" id="sidebarAccountDot" hidden></span>
+        </button>
       </div>
     </aside>
 
@@ -80,6 +85,17 @@
             <button class="period-btn active" data-period="all">Tout</button>
           </div>
         </header>
+
+        <div class="sync-banner" id="syncBanner" hidden>
+          <div class="sync-banner-text">
+            <strong>Synchronisez vos paris</strong>
+            <span>Retrouvez votre bankroll sur PC et iPhone avec un compte gratuit.</span>
+          </div>
+          <button class="btn-primary" id="syncBannerBtn">Créer un compte</button>
+          <button class="btn-icon" id="syncBannerClose" aria-label="Masquer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
 
         <div class="kpi-grid" id="kpiGrid"><!-- KPI cards injectées --></div>
 
@@ -259,19 +275,8 @@
             <p class="field-hint">La synchronisation n'est pas encore configurée sur ce déploiement (fichier <code>js/firebase-config.js</code>).</p>
           </div>
           <div id="cloudSignedOut" hidden>
-            <p class="field-hint" style="margin-bottom:10px">Créez un compte pour retrouver vos paris sur tous vos appareils (PC, iPhone…). Sans compte, les données restent uniquement sur cet appareil.</p>
-            <div class="field">
-              <label for="cloudEmail">Email</label>
-              <input type="email" id="cloudEmail" class="input" autocomplete="email" placeholder="vous@exemple.fr">
-            </div>
-            <div class="field">
-              <label for="cloudPassword">Mot de passe</label>
-              <input type="password" id="cloudPassword" class="input" autocomplete="current-password" placeholder="6 caractères minimum">
-            </div>
-            <div class="settings-actions">
-              <button class="btn-primary" id="cloudSignIn">Se connecter</button>
-              <button class="btn-secondary" id="cloudSignUp">Créer un compte</button>
-            </div>
+            <p class="field-hint" style="margin-bottom:12px">Créez un compte gratuit pour retrouver vos paris sur tous vos appareils (PC, iPhone…). Sans compte, les données restent uniquement sur cet appareil.</p>
+            <button class="btn-primary" id="cloudOpenAuth">Se connecter / Créer un compte</button>
           </div>
           <div id="cloudSignedIn" hidden>
             <p class="cloud-connected">
@@ -462,6 +467,45 @@
           <button type="button" class="btn-secondary" id="cancelBet">Annuler</button>
           <button type="submit" class="btn-primary" id="saveBet">Valider le pari</button>
         </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===== Modal : compte / synchronisation ===== -->
+  <div class="modal-backdrop" id="authModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+      <div class="modal-head">
+        <h2 id="authModalTitle">Votre compte</h2>
+        <button class="btn-icon" id="closeAuthModal" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" id="tabSignIn" role="tab">Se connecter</button>
+        <button class="auth-tab" id="tabSignUp" role="tab">Créer un compte</button>
+      </div>
+
+      <p class="field-hint auth-intro" id="authIntro">Vos paris et réglages seront synchronisés en temps réel sur tous vos appareils.</p>
+
+      <form id="authForm" novalidate>
+        <div class="field">
+          <label for="authEmail">Email</label>
+          <input type="email" id="authEmail" class="input" autocomplete="email" placeholder="vous@exemple.fr" required>
+        </div>
+        <div class="field">
+          <label for="authPassword">Mot de passe</label>
+          <input type="password" id="authPassword" class="input" autocomplete="current-password" placeholder="6 caractères minimum" required minlength="6">
+        </div>
+        <div class="field" id="authConfirmField" hidden>
+          <label for="authConfirm">Confirmez le mot de passe</label>
+          <input type="password" id="authConfirm" class="input" autocomplete="new-password" placeholder="Retapez le mot de passe">
+        </div>
+
+        <p class="auth-error" id="authError" hidden></p>
+
+        <button type="submit" class="btn-primary auth-submit" id="authSubmit">Se connecter</button>
+        <button type="button" class="link-btn auth-forgot" id="authForgot">Mot de passe oublié ?</button>
       </form>
     </div>
   </div>

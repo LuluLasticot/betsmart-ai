@@ -345,6 +345,11 @@
           </div>
           <button class="btn-ghost" id="testApi">Tester la connexion</button>
           <span id="apiTestResult" class="api-test"></span>
+          <div class="field" style="margin-top:14px">
+            <label for="setOddsKey">Clé The Odds API <span class="opt">cotes en temps réel</span></label>
+            <input type="password" id="setOddsKey" class="input" placeholder="Clé The Odds API" autocomplete="off">
+            <p class="field-hint">Vérifie les cotes réelles de <strong>Winamax, Betclic, Unibet</strong> (+ PMU, NetBet) sur les picks du Radar. Clé gratuite (500 crédits/mois) sur <a href="https://the-odds-api.com/#get-access" target="_blank" rel="noopener">the-odds-api.com</a>.</p>
+          </div>
         </div>
 
         <div class="panel settings-panel">
@@ -635,6 +640,7 @@
   <script src="js/stats.js"></script>
   <script src="js/gemini.js"></script>
   <script src="js/settle.js"></script>
+  <script src="js/odds.js"></script>
   <script src="js/advisor.js"></script>
   <script src="js/app.js"></script>
 </body>

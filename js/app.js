@@ -12,7 +12,7 @@
     bets: [],
     txs: [],
     picks: [],
-    settings: { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash', bookrolls: [] },
+    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', model: 'gemini-2.5-flash', bookrolls: [] },
     period: 'all',
     view: 'dashboard',
     charts: {},
@@ -1184,9 +1184,11 @@
       }
       result.picks = result.picks.map((p, i) => ({ ...p, id: savedIds[i] }));
 
-      await DB.setSetting('lastRadar', { result, profileKey: $('#advProfile').value, bankroll: ctx.bankroll, at: Date.now() });
-      renderAdvisorResult(result, $('#advProfile').value, ctx.bankroll, Date.now());
+      const at = Date.now();
+      await DB.setSetting('lastRadar', { result, profileKey: $('#advProfile').value, bankroll: ctx.bankroll, at });
+      renderAdvisorResult(result, $('#advProfile').value, ctx.bankroll, at);
       renderRadarPerf();
+      verifyLiveOdds(result, $('#advProfile').value, ctx.bankroll, at); // en arrière-plan
     } catch (err) {
       container.innerHTML = `<div class="empty-state"><p>Radar indisponible : ${escapeHTML(err.message)}</p><p class="empty-hint">La recherche Google (grounding) nécessite une clé API dont le quota le permet. Réessayez dans une minute.</p></div>`;
     } finally {
@@ -1198,6 +1200,40 @@
     const last = await DB.getSetting('lastRadar');
     if (!last || !last.result) return;
     renderAdvisorResult(last.result, last.profileKey, last.bankroll, last.at);
+  }
+
+  /* ---- Vérification des cotes en temps réel (The Odds API) ---- */
+  async function verifyLiveOdds(result, profileKey, bankroll, at) {
+    const key = state.settings.oddsApiKey;
+    if (!key || !result.picks.length) return;
+
+    let touched = false;
+    for (const p of result.picks) {
+      try {
+        const v = await Odds.verifyPick(key, p);
+        if (v.status !== 'ok') { p.live = { status: v.status }; continue; }
+
+        p.live = { prices: v.prices, checkedAt: Date.now() };
+        p.cote = v.best.price;
+        p.bookmaker = v.best.book;
+        p.cote_verifiee = true;
+        p.value_pct = Math.round((p.probabilite * p.cote - 1) * 1000) / 10;
+        touched = true;
+
+        const stored = state.picks.find((x) => x.id === p.id);
+        if (stored) {
+          Object.assign(stored, { cote: p.cote, bookmaker: p.bookmaker, cote_verifiee: true, value_pct: p.value_pct, live: p.live });
+          await DB.savePick(stored);
+        }
+      } catch (err) {
+        p.live = { status: 'error', message: err.message };
+        break; // quota ou clé invalide : inutile d'insister
+      }
+    }
+
+    await DB.setSetting('lastRadar', { result, profileKey, bankroll, at });
+    renderAdvisorResult(result, profileKey, bankroll, at);
+    if (touched) toast(`Cotes vérifiées en direct${Odds.quota() ? ` · ${Odds.quota()} crédits restants` : ''}`);
   }
 
   /* ---- Analyse d'un match précis ---- */
@@ -1213,6 +1249,24 @@
     try {
       const ctx = buildAdvisorCtx();
       const r = await Advisor.analyzeMatch(state.settings.apiKey, state.settings.model, ctx, query);
+      // Vérification des marchés au prix réel avant affichage
+      if (state.settings.oddsApiKey && r.trouve && r.marches?.length) {
+        for (const m of r.marches) {
+          try {
+            const v = await Odds.verifyPick(state.settings.oddsApiKey, {
+              sport: r.sport, competition: r.competition, match: r.match,
+              date_match: r.date_match, selection: m.selection, marche: m.marche
+            });
+            if (v.status === 'ok') {
+              m.live = v.prices;
+              m.cote = v.best.price;
+              m.bookmaker = v.best.book;
+              m.cote_verifiee = true;
+              m.value_pct = Math.round((m.probabilite * m.cote - 1) * 1000) / 10;
+            }
+          } catch (_) { break; } // quota : on garde les cotes estimées
+        }
+      }
       renderMatchAnalysis(r, ctx);
     } catch (err) {
       $('#advisorContent').innerHTML = `<div class="empty-state"><p>Analyse impossible : ${escapeHTML(err.message)}</p></div>`;
@@ -1244,7 +1298,7 @@
         ${(r.marches || []).map((m, i) => {
           const pos = m.value_pct >= 5;
           return `<div class="market-row">
-            <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')} · ${escapeHTML(m.bookmaker || '')}${m.cote_verifiee === false ? ' · cote estimée' : ''}</div></div>
+            <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')} · ${escapeHTML(m.bookmaker || '')}${m.live ? ' · ✓ direct' : m.cote_verifiee === false ? ' · cote estimée' : ''}</div></div>
             <div class="bet-num">${Number(m.cote).toFixed(2)}</div>
             <div class="bet-num hide-m">${Math.round(m.probabilite * 100)} %</div>
             <div class="bet-profit ${pos ? 'pos' : 'neg'}">${m.value_pct >= 0 ? '+' : ''}${Number(m.value_pct).toFixed(1)} %</div>
@@ -1292,7 +1346,12 @@
         : '';
       const conf = [1, 2, 3, 4, 5].map((n) => `<i class="${n <= (p.confiance || 0) ? 'on' : ''}"></i>`).join('');
       const sources = (p.sources || []).slice(0, 3).map(escapeHTML).join(' · ');
-      const coteBadge = p.cote_verifiee === false ? '<span class="pick-value-badge est">cote estimée</span>' : '';
+      const coteBadge = p.live?.prices ? '<span class="pick-value-badge live">✓ cotes en direct</span>'
+        : p.cote_verifiee === false ? '<span class="pick-value-badge est">cote estimée</span>' : '';
+      const liveLine = p.live?.prices
+        ? `<div class="live-odds">${p.live.prices.map((x, j) => `<span class="live-chip ${j === 0 ? 'best' : ''}">${escapeHTML(x.book)} <strong>${x.price.toFixed(2)}</strong></span>`).join('')}${p.value_pct < 5 ? '<span class="live-warn">value réduite au prix réel — pick moins intéressant</span>' : ''}</div>`
+        : p.live?.status === 'no_match' || p.live?.status === 'no_league' || p.live?.status === 'no_events'
+          ? '<div class="live-odds"><span class="live-warn">cotes live indisponibles pour ce match</span></div>' : '';
 
       return `<div class="pick-card" data-pick="${i}">
         <div class="pick-top">
@@ -1313,6 +1372,7 @@
             <div class="pick-num"><span class="l">Mise conseillée</span><span class="v accent">${m.stake > 0 ? Stats.fmtMoney(m.stake) : '—'}</span></div>
           </div>
         </div>
+        ${liveLine}
         <p class="pick-analysis">${escapeHTML(p.analyse || '')}</p>
         ${p.risques ? `<p class="pick-risks"><strong>Risques :</strong> ${escapeHTML(p.risques)}</p>` : ''}
         <div class="pick-footer">
@@ -1472,6 +1532,15 @@
       toast('Clé API enregistrée');
     });
 
+    $('#setOddsKey').addEventListener('change', async () => {
+      state.settings.oddsApiKey = $('#setOddsKey').value.trim();
+      await DB.setSetting('oddsApiKey', state.settings.oddsApiKey);
+      if (state.settings.oddsApiKey) {
+        try { await Odds.test(state.settings.oddsApiKey); toast('Cotes en temps réel activées ✓'); }
+        catch (err) { toast(err.message); }
+      }
+    });
+
     $('#setModel').addEventListener('change', async () => {
       state.settings.model = $('#setModel').value;
       await DB.setSetting('model', state.settings.model);
@@ -1537,6 +1606,7 @@
 
   function bindSettingsValues() {
     $('#setApiKey').value = state.settings.apiKey;
+    $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setModel').value = state.settings.model;
     syncInitialField();
   }

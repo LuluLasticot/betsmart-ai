@@ -651,6 +651,25 @@ kbd {
 .pick-num .v { font: 600 15px var(--mono); }
 .pick-num .v.accent { color: var(--accent); }
 
+.pick-value-badge.live { background: var(--accent-dim); color: var(--accent); }
+
+.live-odds {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-bottom: 12px;
+}
+.live-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  background: var(--surface-2);
+  font-size: 11.5px; color: var(--text-2);
+}
+.live-chip strong { font-family: var(--mono); color: var(--text); }
+.live-chip.best { border-color: var(--accent); background: var(--accent-dim); }
+.live-chip.best strong { color: var(--accent); }
+.live-warn { font-size: 11.5px; color: var(--amber); }
+
 .pick-analysis { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
 .pick-risks { font-size: 12.5px; color: var(--text-3); margin-bottom: 12px; }
 .pick-risks strong { color: var(--amber); font-weight: 600; }

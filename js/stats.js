@@ -129,10 +129,32 @@ const Stats = (() => {
 
   const round1 = (n) => Math.round(n * 10) / 10;
 
+  /** Détail par bookmaker : capital de départ + P/L propre à chaque book. */
+  function bookmakerBreakdown(bets, bookrolls = []) {
+    const initials = new Map(bookrolls.map((b) => [b.name.trim(), Number(b.initial) || 0]));
+    const names = new Set([...initials.keys(), ...bets.map((b) => (b.bookmaker || '').trim()).filter(Boolean)]);
+
+    return [...names].map((name) => {
+      const own = bets.filter((b) => (b.bookmaker || '').trim() === name);
+      const counted = own.filter(isCounted);
+      const staked = counted.reduce((s, b) => s + Number(b.stake || 0), 0);
+      const pl = counted.reduce((s, b) => s + profit(b), 0);
+      const pendingStake = own.filter((b) => b.status === 'pending').reduce((s, b) => s + Number(b.stake || 0), 0);
+      const initial = initials.get(name) ?? 0;
+      return {
+        name, initial, staked, profit: pl, pendingStake,
+        count: own.length,
+        roi: staked > 0 ? (pl / staked) * 100 : 0,
+        bankroll: initial + pl,
+        hasInitial: initials.has(name)
+      };
+    }).sort((a, b) => b.bankroll - a.bankroll);
+  }
+
   /* ---- Formatage ---- */
   const fmtMoney = (n) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: Math.abs(n) >= 1000 ? 0 : 2 }).format(n);
   const fmtPct = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(1)} %`;
   const fmtSigned = (n) => `${n > 0 ? '+' : ''}${fmtMoney(n)}`;
 
-  return { profit, isSettled, isCounted, inPeriod, kpis, bankrollSeries, groupBy, coachSummary, fmtMoney, fmtPct, fmtSigned };
+  return { profit, isSettled, isCounted, inPeriod, kpis, bankrollSeries, groupBy, bookmakerBreakdown, coachSummary, fmtMoney, fmtPct, fmtSigned };
 })();

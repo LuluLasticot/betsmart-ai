@@ -10,11 +10,17 @@
   /* ---- État ---- */
   const state = {
     bets: [],
-    settings: { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash' },
+    settings: { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash', bookrolls: [] },
     period: 'all',
     view: 'dashboard',
     charts: {}
   };
+
+  /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
+  function effInitial() {
+    const br = (state.settings.bookrolls || []).filter((b) => b.name && b.name.trim());
+    return br.length ? br.reduce((s, b) => s + (Number(b.initial) || 0), 0) : (Number(state.settings.initialBankroll) || 0);
+  }
 
   const STATUS_LABELS = { pending: 'En attente', won: 'Gagné', lost: 'Perdu', void: 'Annulé', cashout: 'Cash out' };
   const TYPE_LABELS = { simple: 'Simple', combine: 'Combiné', systeme: 'Système' };
@@ -76,7 +82,7 @@
      ======================================================================== */
   function renderDashboard() {
     const bets = Stats.inPeriod(state.bets, state.period);
-    const k = Stats.kpis(bets, state.settings.initialBankroll);
+    const k = Stats.kpis(bets, effInitial());
 
     $('#dashboardSub').textContent = state.period === 'all'
       ? `${k.count} paris enregistrés · ${k.pendingCount} en attente (${Stats.fmtMoney(k.pendingStake)} engagés)`
@@ -84,7 +90,7 @@
 
     const cls = (n) => (n > 0.001 ? 'pos' : n < -0.001 ? 'neg' : '');
     $('#kpiGrid').innerHTML = [
-      kpiCard('Bankroll', Stats.fmtMoney(k.bankroll), cls(k.profit), `Départ : ${Stats.fmtMoney(state.settings.initialBankroll)}`),
+      kpiCard('Bankroll', Stats.fmtMoney(k.bankroll), cls(k.profit), `Départ : ${Stats.fmtMoney(effInitial())}`),
       kpiCard('Bénéfice net', Stats.fmtSigned(k.profit), cls(k.profit), `${Stats.fmtMoney(k.totalStaked)} misés`),
       kpiCard('ROI', Stats.fmtPct(k.roi), cls(k.roi), 'Profit / total misé'),
       kpiCard('ROC', Stats.fmtPct(k.roc), cls(k.roc), 'Croissance du capital'),
@@ -95,8 +101,31 @@
     renderBankrollChart(bets);
     renderDoughnut('sportChart', Stats.groupBy(bets, 'sport'));
     renderBarChart('bookmakerChart', Stats.groupBy(bets, 'bookmaker'));
+    renderBookrollPanel();
     renderRecentBets(bets);
     renderSidebarBankroll();
+  }
+
+  /** Détail de bankroll par bookmaker (toujours sur l'ensemble de l'historique). */
+  function renderBookrollPanel() {
+    const rows = Stats.bookmakerBreakdown(state.bets, state.settings.bookrolls || []);
+    const panel = $('#bookrollPanel');
+    if (!rows.length) { panel.hidden = true; return; }
+    panel.hidden = false;
+
+    $('#bookrollList').innerHTML =
+      `<div class="col-headers bookroll-grid"><span>Bookmaker</span><span class="r hide-m">Paris</span><span class="r hide-m">Départ</span><span class="r">P/L</span><span class="r hide-m">ROI</span><span class="r">Bankroll</span></div>`
+      + rows.map((r) => {
+        const cls = r.profit > 0.001 ? 'pos' : r.profit < -0.001 ? 'neg' : 'zero';
+        return `<div class="bet-row bookroll-grid">
+          <div class="bet-main"><div class="bet-event">${escapeHTML(r.name)}</div>${!r.hasInitial ? '<div class="bet-meta">capital de départ non renseigné</div>' : (r.pendingStake > 0 ? `<div class="bet-meta">${Stats.fmtMoney(r.pendingStake)} en attente</div>` : '')}</div>
+          <div class="bet-num hide-m">${r.count}</div>
+          <div class="bet-num hide-m">${r.hasInitial ? Stats.fmtMoney(r.initial) : '—'}</div>
+          <div class="bet-profit ${cls}">${Stats.fmtSigned(r.profit)}</div>
+          <div class="bet-profit ${cls} hide-m">${r.staked > 0 ? Stats.fmtPct(r.roi) : '—'}</div>
+          <div class="bet-num strong">${r.hasInitial ? Stats.fmtMoney(r.bankroll) : '—'}</div>
+        </div>`;
+      }).join('');
   }
 
   function kpiCard(label, value, cls, sub) {
@@ -104,7 +133,7 @@
   }
 
   function renderSidebarBankroll() {
-    const k = Stats.kpis(state.bets, state.settings.initialBankroll);
+    const k = Stats.kpis(state.bets, effInitial());
     $('#sidebarBankroll').textContent = Stats.fmtMoney(k.bankroll);
     $('#sidebarBankroll').style.color = k.profit > 0 ? 'var(--accent)' : k.profit < 0 ? 'var(--red)' : 'var(--text)';
   }
@@ -123,7 +152,7 @@
   function renderBankrollChart(bets) {
     destroyChart('bankroll');
     const ctx = $('#bankrollChart').getContext('2d');
-    const points = Stats.bankrollSeries(bets, state.settings.initialBankroll);
+    const points = Stats.bankrollSeries(bets, effInitial());
     const labels = points.map((p) => p.x);
     const values = points.map((p) => p.y);
     const up = values[values.length - 1] >= values[0];
@@ -418,6 +447,7 @@
   function openBetModal(bet = null) {
     $('#betModal').hidden = false;
     document.body.style.overflow = 'hidden';
+    refreshBookmakerDatalist();
     $('#betModalTitle').textContent = bet ? 'Modifier le pari' : 'Nouveau pari';
     $('#saveBet').textContent = bet ? 'Enregistrer' : 'Valider le pari';
     resetScanUI();
@@ -438,6 +468,14 @@
     $('#fPayout').value = bet?.payout ?? '';
     $('#payoutField').hidden = $('#fStatus').value !== 'cashout';
     updatePotentialGain();
+  }
+
+  /** Vos books configurés apparaissent en tête des suggestions du formulaire. */
+  function refreshBookmakerDatalist() {
+    const mine = (state.settings.bookrolls || []).map((b) => b.name.trim()).filter(Boolean);
+    const defaults = ['Winamax', 'Betclic', 'Unibet', 'ParionsSport', 'PMU', 'Zebet', 'Bwin', 'PokerStars Sports', 'Olybet'];
+    const all = [...new Set([...mine, ...defaults])];
+    $('#bookmakerList').innerHTML = all.map((n) => `<option>${escapeHTML(n)}</option>`).join('');
   }
 
   function closeBetModal() {
@@ -588,7 +626,7 @@
     container.innerHTML = '<div class="coach-loading"><span class="spinner"></span>Gemini analyse votre historique…</div>';
 
     try {
-      const summary = Stats.coachSummary(state.bets, state.settings.initialBankroll);
+      const summary = Stats.coachSummary(state.bets, effInitial());
       const insights = await Gemini.coach(state.settings.apiKey, state.settings.model, summary);
       container.innerHTML = insights.map(insightHTML).join('')
         + `<p class="empty-hint" style="text-align:center;margin-top:16px">Analyse générée le ${new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })} · ${settled.length} paris analysés</p>`;
@@ -630,13 +668,15 @@
     btn.disabled = true;
     container.innerHTML = '<div class="coach-loading"><span class="spinner"></span>Recherche Google en cours : matchs, blessures, forme, cotes… (~30 s)</div>';
 
-    const k = Stats.kpis(state.bets, state.settings.initialBankroll);
+    const k = Stats.kpis(state.bets, effInitial());
     const perf = Stats.groupBy(state.bets, 'sport')
       .filter((g) => g.count >= 3)
       .map((g) => `${g.name}: ROI ${g.roi.toFixed(0)} % sur ${g.count} paris`)
       .join(' ; ') || 'pas encore d\'historique significatif';
-    const bookmakers = [...new Set(state.bets.map((b) => b.bookmaker).filter(Boolean))].slice(0, 4).join(', ')
-      || 'Winamax, Betclic, Unibet';
+    const bookmakers = [...new Set([
+      ...(state.settings.bookrolls || []).map((b) => b.name.trim()).filter(Boolean),
+      ...state.bets.map((b) => b.bookmaker).filter(Boolean)
+    ])].slice(0, 4).join(', ') || 'Winamax, Betclic, Unibet';
 
     const ctx = {
       now: new Date().toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' }),
@@ -741,15 +781,22 @@
      Réglages
      ======================================================================== */
   function bindSettings() {
-    $('#setInitial').value = state.settings.initialBankroll;
-    $('#setApiKey').value = state.settings.apiKey;
-    $('#setModel').value = state.settings.model;
+    bindSettingsValues();
+    renderBookrollRows();
 
     $('#setInitial').addEventListener('change', async () => {
       state.settings.initialBankroll = parseFloat($('#setInitial').value) || 0;
       await DB.setSetting('initialBankroll', state.settings.initialBankroll);
       renderAll();
       toast('Capital initial mis à jour');
+    });
+
+    $('#addBookroll').addEventListener('click', () => {
+      state.settings.bookrolls = state.settings.bookrolls || [];
+      state.settings.bookrolls.push({ name: '', initial: 0 });
+      renderBookrollRows();
+      const inputs = $$('#bookrollRows .bookroll-name');
+      inputs[inputs.length - 1]?.focus();
     });
 
     $('#setApiKey').addEventListener('change', async () => {
@@ -800,6 +847,7 @@
         Object.assign(state.settings, saved);
         state.bets = await DB.getBets();
         bindSettingsValues();
+        renderBookrollRows();
         renderAll();
         toast(`${n} paris importés`);
       } catch (err) {
@@ -812,17 +860,63 @@
       if (!confirm('Effacer définitivement tous les paris et réglages ?')) return;
       await DB.wipe();
       state.bets = [];
-      state.settings = { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash' };
+      state.settings = { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash', bookrolls: [] };
       bindSettingsValues();
+      renderBookrollRows();
       renderAll();
       toast('Données effacées');
     });
   }
 
   function bindSettingsValues() {
-    $('#setInitial').value = state.settings.initialBankroll;
     $('#setApiKey').value = state.settings.apiKey;
     $('#setModel').value = state.settings.model;
+    syncInitialField();
+  }
+
+  /** Le capital global devient la somme des books dès qu'au moins un est défini. */
+  function syncInitialField() {
+    const hasBooks = (state.settings.bookrolls || []).some((b) => b.name && b.name.trim());
+    const input = $('#setInitial');
+    input.disabled = hasBooks;
+    input.value = hasBooks ? effInitial() : state.settings.initialBankroll;
+    $('#setInitialHint').textContent = hasBooks
+      ? 'Calculé automatiquement : somme des capitaux par bookmaker.'
+      : 'Point de départ du calcul du ROC et du graphique d\'évolution.';
+  }
+
+  function renderBookrollRows() {
+    const rows = state.settings.bookrolls || [];
+    $('#bookrollRows').innerHTML = rows.length
+      ? rows.map((b, i) => `<div class="bookroll-row" data-i="${i}">
+          <input type="text" class="input bookroll-name" list="bookmakerList" placeholder="Winamax" value="${escapeHTML(b.name)}">
+          <input type="number" class="input mono bookroll-amount" min="0" step="0.01" placeholder="200" value="${b.initial || ''}">
+          <button type="button" class="btn-icon bookroll-del" aria-label="Retirer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+        </div>`).join('')
+      : '<p class="field-hint">Aucun bookmaker défini — le capital global ci-dessous sert de point de départ.</p>';
+
+    $$('#bookrollRows .bookroll-row').forEach((row) => {
+      const i = Number(row.dataset.i);
+      const save = debounce(async () => {
+        state.settings.bookrolls[i] = {
+          name: row.querySelector('.bookroll-name').value.trim(),
+          initial: parseFloat(row.querySelector('.bookroll-amount').value) || 0
+        };
+        await DB.setSetting('bookrolls', state.settings.bookrolls);
+        syncInitialField();
+        renderAll();
+      }, 400);
+      row.querySelector('.bookroll-name').addEventListener('input', save);
+      row.querySelector('.bookroll-amount').addEventListener('input', save);
+      row.querySelector('.bookroll-del').addEventListener('click', async () => {
+        state.settings.bookrolls.splice(i, 1);
+        await DB.setSetting('bookrolls', state.settings.bookrolls);
+        renderBookrollRows();
+        syncInitialField();
+        renderAll();
+        toast('Bookmaker retiré');
+      });
+    });
   }
 
   /* ========================================================================

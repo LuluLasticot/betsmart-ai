@@ -101,6 +101,14 @@
           </div>
         </div>
 
+        <div class="panel" id="bookrollPanel" hidden>
+          <div class="panel-head">
+            <h2>Bankroll par bookmaker</h2>
+            <button class="btn-ghost" data-goto="settings">Gérer →</button>
+          </div>
+          <div id="bookrollList"></div>
+        </div>
+
         <div class="panel">
           <div class="panel-head">
             <h2>Derniers paris</h2>
@@ -231,11 +239,17 @@
         </header>
 
         <div class="panel settings-panel">
-          <div class="panel-head"><h2>Bankroll</h2></div>
+          <div class="panel-head"><h2>Bankroll & bookmakers</h2></div>
           <div class="field">
-            <label for="setInitial">Capital initial (€)</label>
+            <label>Capital de départ par bookmaker</label>
+            <div id="bookrollRows"></div>
+            <button type="button" class="btn-secondary" id="addBookroll" style="margin-top:8px">+ Ajouter un bookmaker</button>
+            <p class="field-hint">Indiquez ce que vous avez déposé chez chaque book : le dashboard affichera la bankroll réelle de chacun, et le bookmaker renseigné sur vos paris alimentera ce détail.</p>
+          </div>
+          <div class="field">
+            <label for="setInitial">Capital initial global (€)</label>
             <input type="number" id="setInitial" class="input" min="0" step="0.01" placeholder="500">
-            <p class="field-hint">Point de départ du calcul du ROC et du graphique d'évolution.</p>
+            <p class="field-hint" id="setInitialHint">Point de départ du calcul du ROC et du graphique d'évolution.</p>
           </div>
         </div>
 

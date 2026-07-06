@@ -383,6 +383,22 @@ body {
 .col-headers .r { text-align: right; }
 
 /* ==========================================================================
+   Bankroll par bookmaker
+   ========================================================================== */
+.bookroll-grid,
+.col-headers.bookroll-grid {
+  grid-template-columns: minmax(0, 1fr) 60px 84px 90px 76px 96px;
+}
+
+.bookroll-row {
+  display: grid;
+  grid-template-columns: 1fr 120px 32px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+/* ==========================================================================
    Modal
    ========================================================================== */
 .modal-backdrop {
@@ -754,6 +770,57 @@ kbd {
   .form-grid .span-2 { grid-column: span 1; }
   .view-header { margin-bottom: 20px; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* --- Petits écrans (téléphones) --- */
+@media (max-width: 600px) {
+  body { font-size: 13.5px; }
+  .main { padding: 18px 14px calc(96px + env(safe-area-inset-bottom)); }
+  .view-header h1 { font-size: 19px; }
+  .view-header { align-items: flex-start; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+  .period-picker { width: 100%; }
+  .period-btn { flex: 1; }
+
+  .kpi-grid { gap: 8px; margin-bottom: 16px; }
+  .kpi { padding: 13px 14px 12px; }
+  .kpi-value { font-size: 19px; }
+  .kpi-sub { font-size: 11px; }
+
+  .panel { padding: 15px 14px; margin-bottom: 14px; border-radius: var(--radius-sm); }
+  .chart-wrap { height: 220px; }
+  .chart-wrap.sm { height: 180px; }
+
+  .filters { gap: 8px; }
+  .filters .select { flex: 1 1 46%; }
+  .filters .search { min-width: 100%; }
+
+  /* Modal plein écran */
+  .modal-backdrop { padding: 0; align-items: stretch; }
+  .modal {
+    max-width: none;
+    max-height: none;
+    height: 100dvh;
+    border-radius: 0;
+    border: 0;
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+  }
+  .modal-actions { position: sticky; bottom: 0; background: var(--surface); margin-inline: -16px; padding: 14px 16px calc(14px + env(safe-area-inset-bottom)); }
+  .modal-actions .btn-primary { flex: 1; justify-content: center; }
+
+  .bookroll-grid,
+  .col-headers.bookroll-grid { grid-template-columns: minmax(0, 1fr) 90px 96px; }
+  .bookroll-row { grid-template-columns: 1fr 96px 32px; }
+
+  .pick-numbers { gap: 14px; width: 100%; justify-content: space-between; }
+  .pick-selection { flex-direction: column; align-items: stretch; }
+  .pick-footer { flex-direction: column; align-items: stretch; text-align: center; }
+  .pick-footer .btn-secondary { justify-content: center; width: 100%; }
+  .advisor-controls-grid { grid-template-columns: 1fr; }
+  .advisor-run { grid-column: span 1; }
+  .advisor-run label { display: none; }
+
+  .settings-actions .btn-secondary, .settings-actions .btn-danger { flex: 1; justify-content: center; }
+  .toast { bottom: calc(84px + env(safe-area-inset-bottom)); width: max-content; max-width: calc(100vw - 32px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

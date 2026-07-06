@@ -1,10 +1,13 @@
 /* ==========================================================================
-   BetSmart AI — Radar IA (suggestions de paris "value")
-   Pipeline :
-     1. Gemini + Google Search grounding : recherche factuelle (matchs, news,
-        blessures, forme, cotes) → détection de value bets → JSON
-     2. Le CLIENT calcule la mise (Kelly fractionné plafonné) : jamais le LLM.
-   Principe directeur du prompt : mieux vaut 0 pick qu'un mauvais pick.
+   BetSmart AI — Radar IA v2
+   Pipeline en deux passes :
+     Passe 1 (inventaire)  : recherche des matchs réels de la fenêtre → shortlist
+     Passe 2 (enquête)     : investigation approfondie de la shortlist → picks
+   + Boucle de feedback    : les picks passés (réglés) sont réinjectés dans le
+     prompt pour corriger la calibration du modèle au fil du temps.
+   + Anti-doublons         : les matchs déjà pariés sont exclus.
+   + Analyse d'un match précis (tous les marchés principaux).
+   La mise reste calculée côté client (Kelly fractionné plafonné).
    ========================================================================== */
 'use strict';
 
@@ -12,121 +15,196 @@ const Advisor = (() => {
   const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
   /* ------------------------------------------------------------------
-     Le prompt expert
+     Appel Gemini avec grounding + retry sur erreurs transitoires
      ------------------------------------------------------------------ */
-  function buildPrompt(ctx) {
+  async function callGemini(apiKey, model, prompt, { temperature = 0.25, retries = 2 } = {}) {
+    const body = {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { temperature }
+    };
+
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${BASE}/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        body: JSON.stringify(body)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
+        if (!text) throw new Error('Réponse vide du modèle.');
+        return text;
+      }
+
+      // 429 (quota) et 503 (surcharge) : on attend puis on réessaie
+      if ((res.status === 429 || res.status === 503) && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
+        continue;
+      }
+      const err = await res.json().catch(() => ({}));
+      const msg = err?.error?.message || `Erreur API (${res.status})`;
+      throw new Error(res.status === 429 ? 'Quota API atteint — patientez une minute puis réessayez.' : msg);
+    }
+  }
+
+  function extractJSON(text) {
+    const fenced = text.match(/```json\s*([\s\S]*?)```/);
+    const candidates = [];
+    if (fenced) candidates.push(fenced[1]);
+    for (const open of ['{', '[']) {
+      const close = open === '{' ? '}' : ']';
+      const first = text.indexOf(open);
+      const last = text.lastIndexOf(close);
+      if (first !== -1 && last > first) candidates.push(text.slice(first, last + 1));
+    }
+    for (const c of candidates) {
+      try { return JSON.parse(c); } catch (_) { /* essai suivant */ }
+    }
+    return null;
+  }
+
+  /* ------------------------------------------------------------------
+     Boucle de feedback : bilan des picks passés injecté dans le prompt
+     ------------------------------------------------------------------ */
+  function feedbackBlock(picks) {
+    const settled = picks.filter((p) => p.result === 'won' || p.result === 'lost');
+    if (settled.length < 5) return '';
+
+    const stats = radarStats(picks);
+    const bySport = new Map();
+    for (const p of settled) {
+      const s = bySport.get(p.sport) || { n: 0, won: 0, pl: 0 };
+      s.n++; if (p.result === 'won') { s.won++; s.pl += p.cote - 1; } else { s.pl -= 1; }
+      bySport.set(p.sport, s);
+    }
+    const sportLines = [...bySport.entries()]
+      .filter(([, s]) => s.n >= 3)
+      .map(([sport, s]) => `- ${sport} : ${s.won}/${s.n} gagnés, ${s.pl >= 0 ? '+' : ''}${s.pl.toFixed(1)} unités`)
+      .join('\n');
+
+    return `
+# RETOUR D'EXPÉRIENCE SUR TES PRÉCÉDENTES ANALYSES (à intégrer sérieusement)
+
+Sur tes ${settled.length} derniers picks réglés :
+- Probabilité moyenne annoncée : ${stats.avgPredicted} % — taux de réussite réel : ${stats.actualWinRate} %.
+${stats.calibrationGap > 5 ? `- Tu SURESTIMES tes probabilités de ${stats.calibrationGap} points en moyenne : sois plus conservateur, révise tes probabilités À LA BAISSE et exige plus de value.` : stats.calibrationGap < -5 ? `- Tu sous-estimes tes probabilités de ${Math.abs(stats.calibrationGap)} points : tu peux être légèrement plus assertif.` : '- Ta calibration est correcte : maintiens cette rigueur.'}
+- ROI théorique à mise constante : ${stats.flatRoi} %.
+${sportLines ? `Par sport :\n${sportLines}\nÉvite de proposer des picks dans les segments où ton bilan est nettement négatif, sauf signal exceptionnellement fort.` : ''}`;
+  }
+
+  /* ------------------------------------------------------------------
+     Passe 1 — Inventaire et shortlist
+     ------------------------------------------------------------------ */
+  function pass1Prompt(ctx) {
+    return `Tu es l'assistant de recherche d'un analyste de paris sportifs professionnel.
+
+# MISSION (rapide et factuelle)
+Via Google Search, dresse l'inventaire des rencontres RÉELLEMENT programmées dans les ${ctx.horizon} prochaines heures (date/heure actuelles : ${ctx.now}, Europe/Paris) pour : ${ctx.sports}.
+Priorise les compétitions majeures et liquides (grands championnats, coupes d'Europe, ATP/WTA, NBA, playoffs…). Ignore : matchs amicaux, jeunes, compétitions mineures.
+
+${ctx.excluded.length ? `# MATCHS À EXCLURE (l'utilisateur a déjà un pari dessus)\n${ctx.excluded.map((e) => `- ${e}`).join('\n')}\n` : ''}
+# SÉLECTION
+Retiens les 5 à 6 rencontres les PLUS PROMETTEUSES pour la recherche de value : contexte particulier (absences signalées, rotation probable, enjeu asymétrique, série en cours, derby émotionnel…). La promesse de value vient d'une information que le marché pourrait mal intégrer, pas de la notoriété du match.
+
+Termine par un unique bloc \`\`\`json :
+\`\`\`json
+{"candidats": [{"sport": "...", "competition": "...", "match": "Équipe A – Équipe B", "date": "YYYY-MM-DD", "heure": "HH:MM", "angle": "1 phrase : pourquoi ce match peut receler de la value"}]}
+\`\`\`
+Chaque match doit avoir été vérifié par ta recherche (date exacte). Si aucun match dans la fenêtre, renvoie {"candidats": []}.`;
+  }
+
+  /* ------------------------------------------------------------------
+     Passe 2 — Enquête approfondie sur la shortlist
+     ------------------------------------------------------------------ */
+  function pass2Prompt(ctx, candidats) {
     return `# RÔLE
 
-Tu es un analyste quantitatif senior spécialisé dans le value betting sportif. Tu travailles comme le ferait un syndicat de paris professionnel : tu ne cherches pas des "pronostics probables", tu cherches des COTES MAL PRICÉES — des écarts entre la probabilité réelle d'un événement et la probabilité implicite de sa cote. Tu sais qu'un parieur qui joue sans value perd à long terme quelle que soit sa réussite apparente, et que l'abstention est une décision professionnelle respectable.
+Tu es un analyste quantitatif senior spécialisé dans le value betting sportif. Tu travailles comme un syndicat de paris professionnel : tu cherches des COTES MAL PRICÉES — des écarts entre la probabilité réelle et la probabilité implicite de la cote. L'abstention est une décision professionnelle respectable : mieux vaut 0 pick qu'un pick sans avantage.
+${ctx.feedback}
 
-# MISSION
+# SHORTLIST À ENQUÊTER (matchs déjà vérifiés — n'en ajoute AUCUN autre)
+${JSON.stringify(candidats, null, 2)}
 
-Identifier au maximum 3 value bets sur les ${ctx.horizon} prochaines heures, dans ce périmètre :
-- Sports : ${ctx.sports}
-- Bookmakers français de référence pour les cotes : ${ctx.bookmakers}
-- Date et heure actuelles : ${ctx.now} (Europe/Paris)
+# ENQUÊTE OBLIGATOIRE, match par match (via Google Search)
+1. Actualités < 48 h : blessures, suspensions, compositions probables, turnover annoncé, déclarations d'entraîneur.
+2. Forme réelle des 5 derniers matchs (contexte et adversité, pas seulement les résultats).
+3. Enjeu (titre, maintien, match sans enjeu, priorité coupe/championnat) et calendrier/fatigue (match européen récent, déplacement, prolongations).
+4. Confrontations directes si structurellement pertinentes ; météo/surface si le sport y est sensible.
+5. Cote actuelle du marché chez ${ctx.bookmakers}. Si introuvable de source récente → "cote_verifiee": false.
 
-# MÉTHODOLOGIE OBLIGATOIRE (dans cet ordre, via Google Search)
+# ESTIMATION ET SÉLECTION
+- Estime la probabilité réelle de l'issue (calibrée : elle doit refléter ton incertitude, pas ta conviction). Retire la marge du bookmaker (~5-8 %) avant comparaison.
+- value = (probabilite × cote) − 1. Seuils : ≥ 0,05 si cote vérifiée, ≥ 0,08 sinon.
+- Marchés liquides uniquement (1N2, double chance, over/under, handicap, vainqueur). Paris SIMPLES uniquement. Cotes entre 1,40 et 4,50.
+- Confiance 1-5 (5 = information forte convergente non intégrée dans la cote ; < 3 = ne pas proposer).
+- Maximum 3 picks, un seul par match, classés par (value × confiance). Si rien ne passe les seuils : "picks": [] avec explication.
 
-1. **Inventaire** — Recherche les rencontres réellement programmées dans le périmètre (compétitions majeures et liquides en priorité). Vérifie la date et l'heure de chaque match candidat. Un match non confirmé par ta recherche est ÉLIMINÉ.
-2. **Enquête par candidat** — Pour chaque match retenu, recherche activement :
-   - actualités des dernières 48 h : blessures, suspensions, compositions probables, turnover annoncé ;
-   - forme récente (5 derniers matchs) et dynamique réelle (pas seulement les résultats : contexte, adversité) ;
-   - enjeu sportif (course au titre, maintien, match sans enjeu, coupe vs championnat) ;
-   - calendrier et fatigue (match européen 3 jours avant, déplacement, prolongations récentes) ;
-   - confrontations directes si structurellement pertinentes ;
-   - météo/surface si le sport y est sensible (tennis, football).
-3. **Estimation** — Estime la probabilité réelle de l'issue visée (\`probabilite\`, entre 0 et 1). Sois calibré : ta probabilité doit refléter ton incertitude réelle, pas ta conviction. Retire la marge du bookmaker avant toute comparaison (les probabilités implicites d'un marché somment à ~105-108 %).
-4. **Cote du marché** — Recherche la cote actuellement proposée. Si tu ne trouves pas de cote récente et fiable, marque \`cote_verifiee: false\` et donne ta meilleure estimation prudente.
-5. **Calcul de la value** — value = (probabilite × cote) − 1. Ne retiens un pick QUE si value ≥ 0,05 (5 %) avec une cote vérifiée, ou ≥ 0,08 si la cote est estimée.
-6. **Sélection finale** — Classe par (value × confiance) et garde les 3 meilleurs maximum. Un seul pick par match.
+# CONTEXTE UTILISATEUR (pour information, ne recommande jamais de montant de mise)
+- Bankroll : ${ctx.bankroll} € · Profil : ${ctx.riskProfile}
+- Son historique par sport : ${ctx.userPerf}
+- Exposition en cours : ${ctx.exposure}
 
-# RÈGLES STRICTES
-
-- **Zéro invention** : chaque match, chaque fait d'analyse et chaque cote doivent provenir de tes recherches. Cite tes sources (nom du site + ce que tu y as vérifié).
-- **Marchés liquides uniquement** : 1N2, double chance, over/under buts ou points, handicap, vainqueur de match. Jamais de buteurs, cartons, corners ou marchés exotiques (données insuffisantes, marges énormes).
-- **Paris simples uniquement** : jamais de combinés — multiplier les sélections multiplie la marge du bookmaker.
-- **Éviter** : cotes < 1,40 (value quasi impossible après marge) et > 4,50 (variance excessive, probabilités difficiles à calibrer) ; matchs amicaux ; compétitions de jeunes ou mineures.
-- **Calibration de la confiance** (échelle 1-5) : 5 = information forte et convergente (ex. : absence majeure confirmée non intégrée dans la cote) ; 3 = analyse solide mais facteurs contradictoires ; 1-2 = ne pas proposer le pick.
-- **Abstention** : si après recherche aucun pari n'atteint le seuil de value, renvoie \`"picks": []\` avec une explication dans \`analyse_marche\`. C'est une réponse de haute qualité, pas un échec. NE BAISSE JAMAIS tes standards pour "remplir" la réponse.
-
-# CONTEXTE UTILISATEUR (pour adapter, pas pour flatter)
-
-- Bankroll actuelle : ${ctx.bankroll} €
-- Profil de risque déclaré : ${ctx.riskProfile}
-- Historique de performance par sport (ROI réel de CE parieur) : ${ctx.userPerf}
-La mise sera calculée par l'application (Kelly fractionné) : ne recommande JAMAIS de montant de mise. Si l'historique montre un ROI très négatif du parieur sur un sport, tu peux le signaler dans \`risques\` du pick concerné.
-
-# FORMAT DE SORTIE
-
-Réponds en terminant par un unique bloc \`\`\`json contenant exactement cette structure :
-
+# FORMAT DE SORTIE — termine par un unique bloc \`\`\`json :
 \`\`\`json
 {
-  "analyse_marche": "2-3 phrases : état du marché sur la période, pourquoi ces picks (ou pourquoi aucun).",
+  "analyse_marche": "2-3 phrases : état du marché, pourquoi ces picks (ou aucun).",
   "picks": [
     {
-      "sport": "Football",
-      "competition": "Liga",
-      "match": "Villarreal – Osasuna",
-      "date_match": "YYYY-MM-DD",
-      "heure_match": "HH:MM",
-      "marche": "1N2",
-      "selection": "Victoire Villarreal",
-      "cote": 1.85,
-      "cote_verifiee": true,
-      "bookmaker": "Winamax",
-      "probabilite": 0.60,
-      "value_pct": 11.0,
-      "confiance": 4,
-      "analyse": "3-5 phrases factuelles : les éléments recherchés qui justifient l'écart entre ta probabilité et la cote.",
-      "risques": "1-2 phrases : ce qui pourrait invalider l'analyse.",
-      "sources": ["nomdusite.com — compositions probables", "nomdusite.com — cote consultée"]
+      "sport": "Football", "competition": "Liga", "match": "…", "date_match": "YYYY-MM-DD", "heure_match": "HH:MM",
+      "marche": "1N2", "selection": "…", "cote": 1.85, "cote_verifiee": true, "bookmaker": "…",
+      "probabilite": 0.60, "value_pct": 11.0, "confiance": 4,
+      "analyse": "3-5 phrases factuelles issues de ta recherche.",
+      "risques": "1-2 phrases : ce qui invaliderait l'analyse.",
+      "sources": ["site — ce qui a été vérifié"]
     }
   ]
 }
 \`\`\`
-
-Vérifications finales avant de répondre : chaque \`value_pct\` correspond bien à (probabilite × cote − 1) × 100 ; chaque match a une date dans la fenêtre demandée ; aucune cote inventée.`;
+Vérifications finales : value_pct = (probabilite × cote − 1) × 100 ; dates dans la fenêtre ; aucune cote inventée.`;
   }
 
   /* ------------------------------------------------------------------
-     Appel Gemini avec Google Search grounding
-     (le grounding est incompatible avec le mode JSON strict → on
-     demande un bloc \`\`\`json et on parse de façon robuste)
+     Analyse d'un match précis (tous les marchés principaux)
      ------------------------------------------------------------------ */
-  async function suggest(apiKey, model, ctx) {
-    const body = {
-      contents: [{ role: 'user', parts: [{ text: buildPrompt(ctx) }] }],
-      tools: [{ google_search: {} }],
-      generationConfig: { temperature: 0.25 }
-    };
+  function matchPrompt(ctx, query) {
+    return `Tu es un analyste quantitatif senior en value betting. Date/heure actuelles : ${ctx.now} (Europe/Paris).
+${ctx.feedback}
 
-    const res = await fetch(`${BASE}/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-      body: JSON.stringify(body)
-    });
+# MISSION
+L'utilisateur veut une analyse complète de : « ${query} »
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error?.message || `Erreur API (${res.status})`);
-    }
+1. Identifie précisément la rencontre via Google Search (équipes/joueurs, compétition, date, heure). Si introuvable ou ambiguë, dis-le.
+2. Enquête approfondie : blessures/suspensions/compos (< 48 h), forme réelle, enjeu, fatigue/calendrier, H2H pertinents, météo/surface si sensible.
+3. Pour CHAQUE marché principal (1N2 ou vainqueur, double chance si pertinent, over/under principal, handicap principal) : estime la probabilité calibrée, trouve la cote actuelle chez ${ctx.bookmakers}, calcule value = (probabilite × cote) − 1.
+4. Verdict global : le meilleur angle s'il existe (value ≥ 5 %), ou "à éviter" si rien ne se dégage — dis-le franchement.
 
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || '';
-    if (!text) throw new Error('Réponse vide du modèle.');
+Termine par un unique bloc \`\`\`json :
+\`\`\`json
+{
+  "match": "…", "sport": "…", "competition": "…", "date_match": "YYYY-MM-DD", "heure_match": "HH:MM",
+  "trouve": true,
+  "verdict": "a_jouer" | "a_eviter",
+  "resume": "3-4 phrases : lecture globale du match, information clé.",
+  "marches": [
+    {"marche": "1N2", "selection": "…", "cote": 1.85, "cote_verifiee": true, "bookmaker": "…", "probabilite": 0.55, "value_pct": 1.8, "avis": "1 phrase"}
+  ],
+  "meilleur_marche": "libellé du marché retenu ou null",
+  "risques": "1-2 phrases.",
+  "sources": ["site — ce qui a été vérifié"]
+}
+\`\`\`
+Ne force JAMAIS un verdict "a_jouer" : la plupart des matchs ne présentent aucune value exploitable.`;
+  }
 
-    const parsed = extractJSON(text);
-    if (!parsed || !Array.isArray(parsed.picks)) throw new Error('Réponse du modèle illisible — réessayez.');
-
-    // Filet de sécurité côté client : recalcul de la value + filtres durs
-    parsed.picks = parsed.picks
+  /* ------------------------------------------------------------------
+     Orchestration
+     ------------------------------------------------------------------ */
+  function validatePicks(picks) {
+    return (picks || [])
       .filter((p) => p && typeof p.cote === 'number' && typeof p.probabilite === 'number')
-      .map((p) => {
-        const value = p.probabilite * p.cote - 1;
-        return { ...p, value_pct: Math.round(value * 1000) / 10 };
-      })
+      .map((p) => ({ ...p, value_pct: Math.round((p.probabilite * p.cote - 1) * 1000) / 10 }))
       .filter((p) => {
         const seuil = p.cote_verifiee === false ? 0.08 : 0.05;
         return p.probabilite > 0 && p.probabilite < 1
@@ -135,21 +213,88 @@ Vérifications finales avant de répondre : chaque \`value_pct\` correspond bien
           && (p.confiance || 0) >= 3;
       })
       .slice(0, 3);
+  }
 
+  async function suggest(apiKey, model, ctx, onProgress) {
+    // Passe 1 : inventaire
+    onProgress?.('inventory');
+    const raw1 = await callGemini(apiKey, model, pass1Prompt(ctx), { temperature: 0.2 });
+    const inv = extractJSON(raw1);
+    const candidats = (inv?.candidats || [])
+      .filter((c) => c && c.match && /^\d{4}-\d{2}-\d{2}$/.test(c.date || ''))
+      .slice(0, 6);
+
+    if (!candidats.length) {
+      return { analyse_marche: 'Aucune rencontre majeure vérifiable dans la fenêtre demandée — élargissez la fenêtre ou les sports couverts.', picks: [], candidats: [] };
+    }
+
+    // Passe 2 : enquête approfondie
+    onProgress?.('research', candidats);
+    const raw2 = await callGemini(apiKey, ctx.deepModel || model, pass2Prompt(ctx, candidats), { temperature: 0.25 });
+    const parsed = extractJSON(raw2);
+    if (!parsed || !Array.isArray(parsed.picks)) throw new Error('Réponse du modèle illisible — réessayez.');
+
+    parsed.picks = validatePicks(parsed.picks);
+    parsed.candidats = candidats;
+    onProgress?.('done');
     return parsed;
   }
 
-  function extractJSON(text) {
-    const fenced = text.match(/```json\s*([\s\S]*?)```/);
-    const candidates = [];
-    if (fenced) candidates.push(fenced[1]);
-    const first = text.indexOf('{');
-    const last = text.lastIndexOf('}');
-    if (first !== -1 && last > first) candidates.push(text.slice(first, last + 1));
-    for (const c of candidates) {
-      try { return JSON.parse(c); } catch (_) { /* essai suivant */ }
-    }
-    return null;
+  async function analyzeMatch(apiKey, model, ctx, query) {
+    const raw = await callGemini(apiKey, ctx.deepModel || model, matchPrompt(ctx, query), { temperature: 0.25 });
+    const parsed = extractJSON(raw);
+    if (!parsed || typeof parsed !== 'object') throw new Error('Réponse du modèle illisible — réessayez.');
+    parsed.marches = (parsed.marches || [])
+      .filter((m) => m && typeof m.cote === 'number' && typeof m.probabilite === 'number')
+      .map((m) => ({ ...m, value_pct: Math.round((m.probabilite * m.cote - 1) * 1000) / 10 }));
+    return parsed;
+  }
+
+  /* ------------------------------------------------------------------
+     Performance et calibration du Radar
+     picks[].result : 'won' | 'lost' | 'void' | undefined (ouvert)
+     ------------------------------------------------------------------ */
+  function radarStats(picks) {
+    const settled = picks.filter((p) => p.result === 'won' || p.result === 'lost');
+    const n = settled.length;
+    if (!n) return null;
+
+    const won = settled.filter((p) => p.result === 'won').length;
+    const flatPl = settled.reduce((s, p) => s + (p.result === 'won' ? p.cote - 1 : -1), 0);
+    const avgPredicted = settled.reduce((s, p) => s + p.probabilite, 0) / n * 100;
+    const actualWinRate = (won / n) * 100;
+
+    // Calibration par tranche de probabilité annoncée
+    const buckets = [
+      { label: '< 45 %', min: 0, max: 0.45 },
+      { label: '45 – 55 %', min: 0.45, max: 0.55 },
+      { label: '55 – 65 %', min: 0.55, max: 0.65 },
+      { label: '≥ 65 %', min: 0.65, max: 1 }
+    ].map((b) => {
+      const own = settled.filter((p) => p.probabilite >= b.min && p.probabilite < b.max);
+      const w = own.filter((p) => p.result === 'won').length;
+      return {
+        label: b.label, n: own.length,
+        predicted: own.length ? Math.round(own.reduce((s, p) => s + p.probabilite, 0) / own.length * 100) : 0,
+        actual: own.length ? Math.round((w / own.length) * 100) : 0
+      };
+    }).filter((b) => b.n > 0);
+
+    const followed = picks.filter((p) => p.followed && (p.result === 'won' || p.result === 'lost'));
+    const followedPl = followed.reduce((s, p) => s + (p.result === 'won' ? p.cote - 1 : -1), 0);
+
+    return {
+      settled: n, won,
+      hitRate: Math.round(actualWinRate),
+      flatRoi: Math.round((flatPl / n) * 1000) / 10,
+      avgPredicted: Math.round(avgPredicted),
+      actualWinRate: Math.round(actualWinRate),
+      calibrationGap: Math.round(avgPredicted - actualWinRate),
+      buckets,
+      followedCount: followed.length,
+      followedRoi: followed.length ? Math.round((followedPl / followed.length) * 1000) / 10 : null,
+      openCount: picks.filter((p) => !p.result).length
+    };
   }
 
   /* ------------------------------------------------------------------
@@ -168,14 +313,14 @@ Vérifications finales avant de répondre : chaque \`value_pct\` correspond bien
     if (b <= 0 || bankroll <= 0) return { stake: 0, pctBankroll: 0, kelly: 0 };
 
     const p = pick.probabilite;
-    const fullKelly = (pick.cote * p - 1) / b;      // fraction optimale théorique
+    const fullKelly = (pick.cote * p - 1) / b;
     if (fullKelly <= 0) return { stake: 0, pctBankroll: 0, kelly: 0 };
 
-    let fraction = fullKelly * profile.kellyFraction; // Kelly fractionné : réduit drastiquement le risque de ruine
-    if (pick.cote_verifiee === false) fraction *= 0.5; // cote non vérifiée → demi-mise
+    let fraction = fullKelly * profile.kellyFraction;
+    if (pick.cote_verifiee === false) fraction *= 0.5;
     fraction = Math.min(fraction, profile.cap);
 
-    const stake = Math.max(0, Math.floor(bankroll * fraction * 2) / 2); // arrondi à 0,50 €
+    const stake = Math.max(0, Math.floor(bankroll * fraction * 2) / 2);
     return {
       stake,
       pctBankroll: Math.round(fraction * 1000) / 10,
@@ -183,5 +328,5 @@ Vérifications finales avant de répondre : chaque \`value_pct\` correspond bien
     };
   }
 
-  return { suggest, stakeFor, PROFILES };
+  return { suggest, analyzeMatch, stakeFor, radarStats, feedbackBlock, PROFILES };
 })();

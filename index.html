@@ -253,11 +253,30 @@
               </button>
             </div>
           </div>
+          <label class="deep-toggle">
+            <input type="checkbox" id="advDeep">
+            <span>Analyse approfondie (Gemini Pro — plus lent, plus précis)</span>
+          </label>
+        </div>
+
+        <div class="panel" id="radarPerfPanel" hidden>
+          <div class="panel-head">
+            <h2>Performance du Radar</h2>
+            <button class="btn-ghost" id="settlePicks">Mettre à jour les résultats</button>
+          </div>
+          <div id="radarPerfContent"></div>
+        </div>
+
+        <div class="panel advisor-controls">
+          <div class="match-analyze-row">
+            <input type="text" id="matchQuery" class="input" placeholder="Analyser un match précis — ex : PSG Marseille dimanche">
+            <button class="btn-secondary" id="analyzeMatch">Analyser</button>
+          </div>
         </div>
 
         <div id="advisorContent">
           <div class="empty-state">
-            <p>Le Radar recherche sur Google les matchs à venir, les blessures, la forme et les cotes actuelles, puis ne retient que les paris à <strong>value positive</strong> (cote supérieure à la probabilité réelle estimée). La mise conseillée est calculée par Kelly fractionné selon votre bankroll.</p>
+            <p>Le Radar recherche sur Google les matchs à venir, les blessures, la forme et les cotes actuelles, puis ne retient que les paris à <strong>value positive</strong> (cote supérieure à la probabilité réelle estimée). La mise conseillée est calculée par Kelly fractionné selon votre bankroll. Chaque pick est mémorisé : le Radar mesure sa propre fiabilité et se corrige au fil de ses erreurs.</p>
             <p class="empty-hint">S'il n'y a pas de value fiable sur la période, le Radar ne propose rien — c'est voulu.</p>
           </div>
         </div>

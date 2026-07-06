@@ -20,6 +20,7 @@ const Cloud = (() => {
   let user = null;
   let unsubBets = null;
   let unsubTxs = null;
+  let unsubPicks = null;
   let unsubSettings = null;
   let onChange = null;      // rechargement UI (app.js)
   let onStatus = null;      // mise à jour du panneau compte (app.js)
@@ -103,6 +104,7 @@ const Cloud = (() => {
      ------------------------------------------------------------------ */
   const betsCol = () => mods.collection(db, 'users', user.uid, 'bets');
   const txsCol = () => mods.collection(db, 'users', user.uid, 'transactions');
+  const picksCol = () => mods.collection(db, 'users', user.uid, 'picks');
   const settingsDoc = () => mods.doc(db, 'users', user.uid, 'meta', 'settings');
 
   /** Fusion initiale d'une collection : le plus récent (updatedAt) gagne, sans perte. */
@@ -152,9 +154,10 @@ const Cloud = (() => {
   async function startSync() {
     const m = mods;
 
-    // 1. Fusion initiale (paris + transactions).
+    // 1. Fusion initiale (paris + transactions + picks du Radar).
     await mergeCollection(betsCol(), await DB.getBets(), DB.saveBet);
     await mergeCollection(txsCol(), await DB.getTransactions(), DB.saveTransaction);
+    await mergeCollection(picksCol(), await DB.getPicks(), DB.savePick);
 
     // Réglages : le cloud fait foi s'il existe, sinon on y pousse le local.
     const sSnap = await m.getDoc(settingsDoc());
@@ -168,6 +171,7 @@ const Cloud = (() => {
     // 2. Écoute temps réel (les écritures locales en attente sont ignorées).
     unsubBets = watchCollection(betsCol(), DB.getBets, DB.saveBet, DB.deleteBet);
     unsubTxs = watchCollection(txsCol(), DB.getTransactions, DB.saveTransaction, DB.deleteTransaction);
+    unsubPicks = watchCollection(picksCol(), DB.getPicks, DB.savePick, DB.deletePick);
 
     unsubSettings = m.onSnapshot(settingsDoc(), async (snap) => {
       if (snap.metadata.hasPendingWrites || !snap.exists()) return;
@@ -188,16 +192,23 @@ const Cloud = (() => {
     DB.hooks.afterDeleteTx = (id) => {
       if (isOn()) m.deleteDoc(m.doc(txsCol(), id)).catch(console.warn);
     };
+    DB.hooks.afterSavePick = (p) => {
+      if (isOn()) m.setDoc(m.doc(picksCol(), p.id), sanitize(p)).catch(console.warn);
+    };
+    DB.hooks.afterDeletePick = (id) => {
+      if (isOn()) m.deleteDoc(m.doc(picksCol(), id)).catch(console.warn);
+    };
     DB.hooks.afterSetSetting = (key) => {
       if (isOn() && SYNCED_SETTINGS.includes(key)) pushSettings().catch(console.warn);
     };
   }
 
   function stopSync() {
-    unsubBets?.(); unsubTxs?.(); unsubSettings?.();
-    unsubBets = unsubTxs = unsubSettings = null;
+    unsubBets?.(); unsubTxs?.(); unsubPicks?.(); unsubSettings?.();
+    unsubBets = unsubTxs = unsubPicks = unsubSettings = null;
     DB.hooks.afterSaveBet = DB.hooks.afterDeleteBet = DB.hooks.afterSetSetting = null;
     DB.hooks.afterSaveTx = DB.hooks.afterDeleteTx = null;
+    DB.hooks.afterSavePick = DB.hooks.afterDeletePick = null;
   }
 
   async function pushSettings() {

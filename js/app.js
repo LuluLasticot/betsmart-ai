@@ -11,6 +11,7 @@
   const state = {
     bets: [],
     txs: [],
+    picks: [],
     settings: { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash', bookrolls: [] },
     period: 'all',
     view: 'dashboard',
@@ -33,7 +34,7 @@
   async function init() {
     const saved = await DB.getAllSettings();
     Object.assign(state.settings, saved);
-    [state.bets, state.txs] = await Promise.all([DB.getBets(), DB.getTransactions()]);
+    [state.bets, state.txs, state.picks] = await Promise.all([DB.getBets(), DB.getTransactions(), DB.getPicks()]);
 
     bindNav();
     bindModal();
@@ -56,7 +57,8 @@
       onChange: async () => {
         const saved = await DB.getAllSettings();
         Object.assign(state.settings, saved);
-        [state.bets, state.txs] = await Promise.all([DB.getBets(), DB.getTransactions()]);
+        [state.bets, state.txs, state.picks] = await Promise.all([DB.getBets(), DB.getTransactions(), DB.getPicks()]);
+        renderRadarPerf();
         bindSettingsValues();
         renderBookrollRows();
         renderAll();
@@ -1103,10 +1105,59 @@
   }
 
   /* ========================================================================
-     Radar IA (suggestions de value bets)
+     Radar IA v2 (suggestions de value bets, avec mémoire)
      ======================================================================== */
   function bindAdvisor() {
     $('#runAdvisor').addEventListener('click', runAdvisor);
+    $('#analyzeMatch').addEventListener('click', runMatchAnalysis);
+    $('#matchQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runMatchAnalysis(); } });
+    $('#settlePicks').addEventListener('click', settleRadarPicks);
+    renderRadarPerf();
+    restoreLastRadar();
+  }
+
+  function buildAdvisorCtx() {
+    const k = Stats.kpis(state.bets, effInitial(), state.txs);
+    const perf = Stats.groupBy(state.bets, 'sport')
+      .filter((g) => g.count >= 3)
+      .map((g) => `${g.name}: ROI ${g.roi.toFixed(0)} % sur ${g.count} paris`)
+      .join(' ; ') || 'pas encore d\'historique significatif';
+    const bookmakers = [...new Set([
+      ...(state.settings.bookrolls || []).map((b) => b.name.trim()).filter(Boolean),
+      ...state.bets.map((b) => b.bookmaker).filter(Boolean)
+    ])].slice(0, 4).join(', ') || 'Winamax, Betclic, Unibet';
+
+    const pending = state.bets.filter((b) => b.status === 'pending');
+    return {
+      now: new Date().toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' }),
+      horizon: $('#advHorizon').value,
+      sports: $('#advSports').value,
+      bookmakers,
+      bankroll: Math.round(k.bankroll),
+      riskProfile: Advisor.PROFILES[$('#advProfile').value].label,
+      userPerf: perf,
+      excluded: pending.map((b) => `${b.event} (${b.date})`).slice(0, 20),
+      exposure: pending.length
+        ? `${pending.length} paris en attente pour ${Stats.fmtMoney(pending.reduce((s, b) => s + Number(b.stake || 0), 0))} au total`
+        : 'aucun pari en cours',
+      feedback: Advisor.feedbackBlock(state.picks),
+      deepModel: $('#advDeep').checked ? 'gemini-2.5-pro' : null
+    };
+  }
+
+  function renderRadarProgress(step) {
+    const steps = [
+      ['inventory', 'Inventaire des matchs de la fenêtre'],
+      ['research', 'Enquête approfondie : blessures, forme, cotes'],
+      ['done', 'Sélection des value bets']
+    ];
+    const idx = steps.findIndex(([s]) => s === step);
+    $('#advisorContent').innerHTML = `<div class="radar-progress">
+      ${steps.map(([s, label], i) => `<div class="radar-step ${i < idx ? 'done' : i === idx ? 'active' : ''}">
+        <span class="dot">${i < idx ? '✓' : ''}</span><span>${label}</span>
+      </div>`).join('')}
+      <p class="empty-hint" style="margin-top:8px">${idx === 0 ? '~15 s' : '~30-40 s'} — Gemini interroge Google en temps réel</p>
+    </div>`;
   }
 
   async function runAdvisor() {
@@ -1118,42 +1169,112 @@
 
     const btn = $('#runAdvisor');
     btn.disabled = true;
-    container.innerHTML = '<div class="coach-loading"><span class="spinner"></span>Recherche Google en cours : matchs, blessures, forme, cotes… (~30 s)</div>';
-
-    const k = Stats.kpis(state.bets, effInitial(), state.txs);
-    const perf = Stats.groupBy(state.bets, 'sport')
-      .filter((g) => g.count >= 3)
-      .map((g) => `${g.name}: ROI ${g.roi.toFixed(0)} % sur ${g.count} paris`)
-      .join(' ; ') || 'pas encore d\'historique significatif';
-    const bookmakers = [...new Set([
-      ...(state.settings.bookrolls || []).map((b) => b.name.trim()).filter(Boolean),
-      ...state.bets.map((b) => b.bookmaker).filter(Boolean)
-    ])].slice(0, 4).join(', ') || 'Winamax, Betclic, Unibet';
-
-    const ctx = {
-      now: new Date().toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' }),
-      horizon: $('#advHorizon').value,
-      sports: $('#advSports').value,
-      bookmakers,
-      bankroll: Math.round(k.bankroll),
-      riskProfile: Advisor.PROFILES[$('#advProfile').value].label,
-      userPerf: perf
-    };
+    const ctx = buildAdvisorCtx();
+    renderRadarProgress('inventory');
 
     try {
-      const result = await Advisor.suggest(state.settings.apiKey, state.settings.model, ctx);
-      renderAdvisorResult(result, $('#advProfile').value, k.bankroll);
+      const result = await Advisor.suggest(state.settings.apiKey, state.settings.model, ctx, (step) => renderRadarProgress(step));
+
+      // Mémorisation des picks (traçabilité + apprentissage)
+      const savedIds = [];
+      for (const p of result.picks) {
+        const saved = await DB.savePick({ ...p, followed: false, result: null, profile: $('#advProfile').value });
+        savedIds.push(saved.id);
+        state.picks.unshift(saved);
+      }
+      result.picks = result.picks.map((p, i) => ({ ...p, id: savedIds[i] }));
+
+      await DB.setSetting('lastRadar', { result, profileKey: $('#advProfile').value, bankroll: ctx.bankroll, at: Date.now() });
+      renderAdvisorResult(result, $('#advProfile').value, ctx.bankroll, Date.now());
+      renderRadarPerf();
     } catch (err) {
-      container.innerHTML = `<div class="empty-state"><p>Radar indisponible : ${escapeHTML(err.message)}</p><p class="empty-hint">La recherche Google (grounding) nécessite une clé API dont le quota le permet. Réessayez ou changez de modèle dans les Réglages.</p></div>`;
+      container.innerHTML = `<div class="empty-state"><p>Radar indisponible : ${escapeHTML(err.message)}</p><p class="empty-hint">La recherche Google (grounding) nécessite une clé API dont le quota le permet. Réessayez dans une minute.</p></div>`;
     } finally {
       btn.disabled = false;
     }
   }
 
-  function renderAdvisorResult(result, profileKey, bankroll) {
+  async function restoreLastRadar() {
+    const last = await DB.getSetting('lastRadar');
+    if (!last || !last.result) return;
+    renderAdvisorResult(last.result, last.profileKey, last.bankroll, last.at);
+  }
+
+  /* ---- Analyse d'un match précis ---- */
+  async function runMatchAnalysis() {
+    const query = $('#matchQuery').value.trim();
+    if (!query) return;
+    if (!state.settings.apiKey) { toast('Ajoutez votre clé API Gemini dans les Réglages'); return; }
+
+    const btn = $('#analyzeMatch');
+    btn.disabled = true;
+    $('#advisorContent').innerHTML = `<div class="coach-loading"><span class="spinner"></span>Analyse approfondie de « ${escapeHTML(query)} »… (~30 s)</div>`;
+
+    try {
+      const ctx = buildAdvisorCtx();
+      const r = await Advisor.analyzeMatch(state.settings.apiKey, state.settings.model, ctx, query);
+      renderMatchAnalysis(r, ctx);
+    } catch (err) {
+      $('#advisorContent').innerHTML = `<div class="empty-state"><p>Analyse impossible : ${escapeHTML(err.message)}</p></div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderMatchAnalysis(r, ctx) {
+    const container = $('#advisorContent');
+    if (!r.trouve) {
+      container.innerHTML = `<div class="market-note">Match introuvable ou ambigu — précisez les équipes et la date (ex : « Lyon – Lille samedi »).</div>`;
+      return;
+    }
+    const dateTxt = r.date_match ? new Date(r.date_match + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + (r.heure_match ? ` · ${r.heure_match}` : '') : '';
+    const profileKey = $('#advProfile').value;
+    const k = Stats.kpis(state.bets, effInitial(), state.txs);
+
+    container.innerHTML = `<div class="pick-card">
+      <div class="pick-top">
+        <div class="pick-title">
+          <h3>${escapeHTML(r.match)}</h3>
+          <div class="pick-meta">${escapeHTML(r.sport || '')} · ${escapeHTML(r.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
+        </div>
+        <span class="verdict-badge ${r.verdict === 'a_jouer' ? 'play' : 'avoid'}">${r.verdict === 'a_jouer' ? 'Value détectée' : 'À éviter'}</span>
+      </div>
+      <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
+      <div class="markets-table">
+        ${(r.marches || []).map((m, i) => {
+          const pos = m.value_pct >= 5;
+          return `<div class="market-row">
+            <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')} · ${escapeHTML(m.bookmaker || '')}${m.cote_verifiee === false ? ' · cote estimée' : ''}</div></div>
+            <div class="bet-num">${Number(m.cote).toFixed(2)}</div>
+            <div class="bet-num hide-m">${Math.round(m.probabilite * 100)} %</div>
+            <div class="bet-profit ${pos ? 'pos' : 'neg'}">${m.value_pct >= 0 ? '+' : ''}${Number(m.value_pct).toFixed(1)} %</div>
+            <div class="avis">${escapeHTML(m.avis || '')}${pos ? ` · <button class="link-btn" data-add-market="${i}">parier</button>` : ''}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      ${r.risques ? `<p class="pick-risks" style="margin-top:12px"><strong>Risques :</strong> ${escapeHTML(r.risques)}</p>` : ''}
+      <div class="pick-footer"><span class="pick-sources">${(r.sources || []).slice(0, 3).map(escapeHTML).join(' · ')}</span></div>
+    </div>`;
+
+    container.querySelectorAll('[data-add-market]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const m = r.marches[Number(btn.dataset.addMarket)];
+        const stake = Advisor.stakeFor(k.bankroll, m, profileKey).stake;
+        prefillBetFromPick({
+          date_match: r.date_match, bookmaker: m.bookmaker, sport: r.sport,
+          competition: r.competition, match: r.match, selection: m.selection, cote: m.cote
+        }, stake);
+      });
+    });
+  }
+
+  function renderAdvisorResult(result, profileKey, bankroll, at) {
     const container = $('#advisorContent');
     let html = '';
 
+    if (at) {
+      html += `<p class="empty-hint" style="margin-bottom:10px">Analyse du ${new Date(at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</p>`;
+    }
     if (result.analyse_marche) {
       html += `<div class="market-note">${escapeHTML(result.analyse_marche)}</div>`;
     }
@@ -1208,25 +1329,119 @@
     container.innerHTML = html;
 
     container.querySelectorAll('[data-add-pick]').forEach((btn) => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const p = result.picks[Number(btn.dataset.addPick)];
         const m = Advisor.stakeFor(bankroll, p, profileKey);
-        openBetModal();
-        $('#fDate').value = p.date_match && /^\d{4}-\d{2}-\d{2}$/.test(p.date_match) ? p.date_match : new Date().toISOString().slice(0, 10);
-        $('#fBookmaker').value = p.bookmaker || '';
-        $('#fSport').value = p.sport || '';
-        $('#fCompetition').value = p.competition || '';
-        $('#fEvent').value = p.match || '';
-        $('#fSelection').value = p.selection || '';
-        $('#fType').value = 'simple';
-        $('#legsField').hidden = true;
-        $('#fOdds').value = p.cote || '';
-        $('#fStake').value = m.stake || '';
-        $('#fStatus').value = 'pending';
-        updatePotentialGain();
-        toast('Pari pré-rempli — vérifiez la cote chez votre bookmaker');
+        // Trace le pick comme "suivi" pour comparer picks suivis vs ignorés
+        if (p.id) {
+          const stored = state.picks.find((x) => x.id === p.id);
+          if (stored && !stored.followed) {
+            stored.followed = true;
+            await DB.savePick(stored);
+          }
+        }
+        prefillBetFromPick(p, m.stake);
       });
     });
+  }
+
+  /** Pré-remplit le formulaire de pari depuis un pick du Radar. */
+  function prefillBetFromPick(p, stake) {
+    openBetModal();
+    $('#fDate').value = p.date_match && /^\d{4}-\d{2}-\d{2}$/.test(p.date_match) ? p.date_match : new Date().toISOString().slice(0, 10);
+    $('#fBookmaker').value = p.bookmaker || '';
+    $('#fSport').value = p.sport || '';
+    $('#fCompetition').value = p.competition || '';
+    $('#fEvent').value = p.match || '';
+    $('#fSelection').value = p.selection || '';
+    $('#fType').value = 'simple';
+    $('#legsField').hidden = true;
+    $('#fOdds').value = p.cote || '';
+    $('#fStake').value = stake || '';
+    $('#fTipster').value = 'Radar IA';
+    $('#fStatus').value = 'pending';
+    updatePotentialGain();
+    toast('Pari pré-rempli — vérifiez la cote chez votre bookmaker');
+  }
+
+  /* ---- Performance & calibration du Radar ---- */
+  function renderRadarPerf() {
+    const stats = Advisor.radarStats(state.picks);
+    const panel = $('#radarPerfPanel');
+    const openOverdue = radarPicksOverdue().length;
+    if (!stats && !openOverdue) { panel.hidden = true; return; }
+    panel.hidden = false;
+    $('#settlePicks').style.display = openOverdue ? '' : 'none';
+
+    if (!stats) {
+      $('#radarPerfContent').innerHTML = `<p class="field-hint">${openOverdue} pick(s) en attente de résultat — cliquez sur « Mettre à jour les résultats ».</p>`;
+      return;
+    }
+
+    const cls = (n) => (n > 0 ? 'pos' : n < 0 ? 'neg' : '');
+    $('#radarPerfContent').innerHTML = `
+      <div class="perf-kpis">
+        <div class="perf-kpi"><span class="v">${stats.settled}</span><span class="l">Picks réglés</span></div>
+        <div class="perf-kpi"><span class="v">${stats.hitRate} %</span><span class="l">Réussite</span></div>
+        <div class="perf-kpi"><span class="v ${cls(stats.flatRoi)}">${stats.flatRoi >= 0 ? '+' : ''}${stats.flatRoi} %</span><span class="l">ROI mise constante</span></div>
+        ${stats.followedRoi !== null ? `<div class="perf-kpi"><span class="v ${cls(stats.followedRoi)}">${stats.followedRoi >= 0 ? '+' : ''}${stats.followedRoi} %</span><span class="l">ROI picks suivis (${stats.followedCount})</span></div>` : ''}
+        <div class="perf-kpi"><span class="v">${stats.openCount}</span><span class="l">En cours</span></div>
+      </div>
+      ${stats.buckets.length ? `
+      <div class="col-headers calib-grid"><span>Proba annoncée</span><span class="r">Picks</span><span class="r">Prédit</span><span class="r">Réel</span></div>
+      ${stats.buckets.map((b) => `<div class="bet-row calib-grid">
+        <div class="bet-event">${b.label}</div>
+        <div class="bet-num">${b.n}</div>
+        <div class="bet-num">${b.predicted} %</div>
+        <div class="bet-profit ${b.actual >= b.predicted ? 'pos' : 'neg'}">${b.actual} %</div>
+      </div>`).join('')}` : ''}
+      <p class="calib-note">${Math.abs(stats.calibrationGap) > 5
+        ? `<strong>Écart de calibration : ${stats.calibrationGap > 0 ? '+' : ''}${stats.calibrationGap} pts</strong> — le Radar ${stats.calibrationGap > 0 ? 'surestime' : 'sous-estime'} ses probabilités. Ce bilan lui est réinjecté à chaque analyse pour qu'il se corrige.`
+        : 'Calibration correcte : les probabilités annoncées collent aux résultats réels. Ce bilan est réinjecté à chaque analyse.'}</p>`;
+  }
+
+  function radarPicksOverdue() {
+    const today = new Date().toISOString().slice(0, 10);
+    return state.picks.filter((p) => !p.result && p.date_match && p.date_match <= today);
+  }
+
+  async function settleRadarPicks() {
+    if (!state.settings.apiKey) { toast('Ajoutez votre clé API Gemini dans les Réglages'); return; }
+    const overdue = radarPicksOverdue().slice(0, 15);
+    if (!overdue.length) { toast('Aucun pick à régler'); return; }
+
+    const btn = $('#settlePicks');
+    btn.disabled = true;
+    btn.textContent = 'Vérification…';
+
+    try {
+      // Réutilise le vérificateur de résultats en mappant les picks en pseudo-paris
+      const pseudo = overdue.map((p) => ({
+        id: p.id, sport: p.sport, competition: p.competition,
+        event: p.match, date: p.date_match, selection: p.selection,
+        betType: 'simple', odds: p.cote
+      }));
+      const results = await Settle.check(state.settings.apiKey, state.settings.model, pseudo);
+
+      let settled = 0;
+      for (const r of results) {
+        if (!['won', 'lost', 'void'].includes(r.statut)) continue;
+        const pick = state.picks.find((p) => p.id === r.id);
+        if (!pick) continue;
+        pick.result = r.statut;
+        pick.score = r.score || null;
+        pick.settledAt = Date.now();
+        await DB.savePick(pick);
+        settled++;
+      }
+      renderRadarPerf();
+      toast(settled ? `${settled} pick(s) réglés — calibration mise à jour` : 'Résultats pas encore disponibles');
+    } catch (err) {
+      toast(`Vérification impossible : ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Mettre à jour les résultats';
+    }
   }
 
   /* ========================================================================

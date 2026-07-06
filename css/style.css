@@ -699,6 +699,16 @@ kbd {
 .settings-panel .field { margin-bottom: 14px; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 
+.cloud-connected {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13.5px; margin-bottom: 6px;
+}
+.cloud-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
 .api-test { margin-left: 10px; font-size: 12.5px; }
 .api-test.ok { color: var(--accent); }
 .api-test.ko { color: var(--red); }

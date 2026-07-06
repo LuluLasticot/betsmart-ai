@@ -1,11 +1,13 @@
 /* BetSmart AI — Service Worker
    Stratégie : cache-first pour le shell, network-first pour les CDN. */
-const CACHE = 'betsmart-v4';
+const CACHE = 'betsmart-v5';
 const SHELL = [
   './',
   './index.html',
   './css/style.css',
   './js/db.js',
+  './js/firebase-config.js',
+  './js/cloud.js',
   './js/stats.js',
   './js/gemini.js',
   './js/advisor.js',
@@ -33,8 +35,8 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  // Ne jamais intercepter l'API Gemini
-  if (url.hostname.includes('generativelanguage.googleapis.com')) return;
+  // Ne jamais intercepter les API Google (Gemini, Firebase Auth/Firestore)
+  if (url.hostname.endsWith('googleapis.com') || url.hostname.endsWith('firebaseapp.com')) return;
   if (e.request.method !== 'GET') return;
 
   e.respondWith(

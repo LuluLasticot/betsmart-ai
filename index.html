@@ -254,6 +254,37 @@
         </div>
 
         <div class="panel settings-panel">
+          <div class="panel-head"><h2>Synchronisation cloud</h2></div>
+          <div id="cloudUnconfigured" hidden>
+            <p class="field-hint">La synchronisation n'est pas encore configurée sur ce déploiement (fichier <code>js/firebase-config.js</code>).</p>
+          </div>
+          <div id="cloudSignedOut" hidden>
+            <p class="field-hint" style="margin-bottom:10px">Créez un compte pour retrouver vos paris sur tous vos appareils (PC, iPhone…). Sans compte, les données restent uniquement sur cet appareil.</p>
+            <div class="field">
+              <label for="cloudEmail">Email</label>
+              <input type="email" id="cloudEmail" class="input" autocomplete="email" placeholder="vous@exemple.fr">
+            </div>
+            <div class="field">
+              <label for="cloudPassword">Mot de passe</label>
+              <input type="password" id="cloudPassword" class="input" autocomplete="current-password" placeholder="6 caractères minimum">
+            </div>
+            <div class="settings-actions">
+              <button class="btn-primary" id="cloudSignIn">Se connecter</button>
+              <button class="btn-secondary" id="cloudSignUp">Créer un compte</button>
+            </div>
+          </div>
+          <div id="cloudSignedIn" hidden>
+            <p class="cloud-connected">
+              <span class="cloud-dot" aria-hidden="true"></span>
+              Synchronisation active — <strong id="cloudUserEmail"></strong>
+            </p>
+            <p class="field-hint" style="margin-bottom:10px">Vos paris et réglages (clé API comprise) sont synchronisés en temps réel entre vos appareils, avec prise en charge hors-ligne.</p>
+            <button class="btn-secondary" id="cloudSignOut">Se déconnecter</button>
+          </div>
+          <p class="api-test" id="cloudError"></p>
+        </div>
+
+        <div class="panel settings-panel">
           <div class="panel-head"><h2>Intelligence artificielle</h2></div>
           <div class="field">
             <label for="setApiKey">Clé API Google Gemini</label>
@@ -439,6 +470,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
   <script src="js/db.js"></script>
+  <script src="js/firebase-config.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/stats.js"></script>
   <script src="js/gemini.js"></script>
   <script src="js/advisor.js"></script>

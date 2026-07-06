@@ -46,6 +46,9 @@ const DB = (() => {
     });
   }
 
+  /* ---- Hooks de synchronisation (branchés par cloud.js) ---- */
+  const hooks = { afterSaveBet: null, afterDeleteBet: null, afterSetSetting: null };
+
   /* ---- Paris ---- */
   async function getBets() {
     const d = await open();
@@ -54,14 +57,21 @@ const DB = (() => {
     return bets.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
   }
 
-  function saveBet(bet) {
+  function saveBet(bet, opts = {}) {
     if (!bet.id) bet.id = crypto.randomUUID();
     if (!bet.createdAt) bet.createdAt = Date.now();
-    return tx('bets', 'readwrite', (s) => s.put(bet)).then(() => bet);
+    if (!opts.silent) bet.updatedAt = Date.now(); // les applications distantes gardent leur horodatage
+    return tx('bets', 'readwrite', (s) => s.put(bet)).then(() => {
+      if (!opts.silent) hooks.afterSaveBet?.(bet);
+      return bet;
+    });
   }
 
-  function deleteBet(id) {
-    return tx('bets', 'readwrite', (s) => s.delete(id));
+  function deleteBet(id, opts = {}) {
+    return tx('bets', 'readwrite', (s) => s.delete(id)).then((r) => {
+      if (!opts.silent) hooks.afterDeleteBet?.(id);
+      return r;
+    });
   }
 
   function clearBets() {
@@ -76,8 +86,11 @@ const DB = (() => {
     return row ? row.value : fallback;
   }
 
-  function setSetting(key, value) {
-    return tx('settings', 'readwrite', (s) => s.put({ key, value }));
+  function setSetting(key, value, opts = {}) {
+    return tx('settings', 'readwrite', (s) => s.put({ key, value })).then((r) => {
+      if (!opts.silent) hooks.afterSetSetting?.(key, value);
+      return r;
+    });
   }
 
   async function getAllSettings() {
@@ -113,5 +126,5 @@ const DB = (() => {
     return reqToPromise(d.transaction('settings', 'readwrite').objectStore('settings').clear());
   }
 
-  return { getBets, saveBet, deleteBet, getSetting, setSetting, getAllSettings, exportAll, importAll, wipe };
+  return { getBets, saveBet, deleteBet, getSetting, setSetting, getAllSettings, exportAll, importAll, wipe, hooks };
 })();

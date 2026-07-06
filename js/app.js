@@ -43,9 +43,64 @@
 
     renderAll();
 
+    // Synchronisation cloud (chargée en arrière-plan, sans bloquer l'affichage)
+    bindCloud();
+    Cloud.init({
+      onChange: async () => {
+        const saved = await DB.getAllSettings();
+        Object.assign(state.settings, saved);
+        state.bets = await DB.getBets();
+        bindSettingsValues();
+        renderBookrollRows();
+        renderAll();
+      },
+      onStatus: updateCloudPanel
+    });
+
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       navigator.serviceWorker.register('sw.js').catch(() => {});
     }
+  }
+
+  /* ========================================================================
+     Compte & synchronisation cloud
+     ======================================================================== */
+  function updateCloudPanel(status) {
+    $('#cloudUnconfigured').hidden = status.state !== 'unconfigured' && status.state !== 'error';
+    $('#cloudSignedOut').hidden = status.state !== 'signedout';
+    $('#cloudSignedIn').hidden = status.state !== 'connected';
+    if (status.state === 'connected') {
+      $('#cloudUserEmail').textContent = status.email;
+      toast('Synchronisation cloud active');
+    }
+    if (status.state === 'error') {
+      const el = $('#cloudError');
+      el.textContent = `Initialisation impossible : ${status.message}`;
+      el.className = 'api-test ko';
+    }
+  }
+
+  function bindCloud() {
+    const errEl = $('#cloudError');
+    const showErr = (err) => { errEl.textContent = Cloud.friendlyError(err); errEl.className = 'api-test ko'; };
+    const clearErr = () => { errEl.textContent = ''; };
+
+    const withBusy = (btn, fn) => async () => {
+      clearErr();
+      const email = $('#cloudEmail').value.trim();
+      const password = $('#cloudPassword').value;
+      if (!email || !password) { showErr({ code: 'auth/invalid-credential' }); return; }
+      btn.disabled = true;
+      try { await fn(email, password); } catch (err) { showErr(err); } finally { btn.disabled = false; }
+    };
+
+    $('#cloudSignIn').addEventListener('click', withBusy($('#cloudSignIn'), Cloud.signIn));
+    $('#cloudSignUp').addEventListener('click', withBusy($('#cloudSignUp'), Cloud.signUp));
+    $('#cloudSignOut').addEventListener('click', async () => {
+      clearErr();
+      await Cloud.signOutUser();
+      toast('Déconnecté — les données restent sur cet appareil');
+    });
   }
 
   function renderAll() {

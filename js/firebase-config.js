@@ -7,15 +7,11 @@
    ========================================================================== */
 'use strict';
 
-const FIREBASE_CONFIG = null;
-
-/* Exemple :
 const FIREBASE_CONFIG = {
-  apiKey: "AIza…",
-  authDomain: "betsmart-ai.firebaseapp.com",
-  projectId: "betsmart-ai",
-  storageBucket: "betsmart-ai.firebasestorage.app",
-  messagingSenderId: "…",
-  appId: "1:…:web:…"
+  apiKey: "AIzaSyDx_SFq0peV2q7dKM4rJmGiTuJjNdK04WM",
+  authDomain: "betsmart-ai-6d732.firebaseapp.com",
+  projectId: "betsmart-ai-6d732",
+  storageBucket: "betsmart-ai-6d732.firebasestorage.app",
+  messagingSenderId: "1059364270546",
+  appId: "1:1059364270546:web:9544890de4535a8bb1d80b"
 };
-*/

@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="BetSmart AI — Gestion de bankroll de paris sportifs assistée par IA">
+  <meta name="theme-color" content="#0b0c0f">
+  <title>BetSmart AI</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <!-- iOS : écran d'accueil -->
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BetSmart">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div class="app">
+
+    <!-- ===== Sidebar ===== -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/></svg>
+        </div>
+        <span class="brand-name">BetSmart<em>AI</em></span>
+      </div>
+
+      <nav class="nav" aria-label="Navigation principale">
+        <button class="nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+          <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-view="bets">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z" transform="translate(0 2)"/><path d="M14 8v10" stroke-dasharray="2 3" transform="translate(0 -1)"/></svg>
+          <span>Mes paris</span>
+        </button>
+        <button class="nav-item" data-view="coach">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
+          <span>Coach IA</span>
+        </button>
+        <button class="nav-item" data-view="advisor">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.5" fill="currentColor"/><path d="M12 3v2.5M21 12h-2.5"/></svg>
+          <span>Radar IA</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h0a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55h0a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
+          <span>Réglages</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="mini-bankroll">
+          <span class="mini-bankroll-label">Bankroll</span>
+          <span class="mini-bankroll-value" id="sidebarBankroll">—</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===== Main ===== -->
+    <main class="main" id="main">
+
+      <!-- Dashboard -->
+      <section class="view active" id="view-dashboard">
+        <header class="view-header">
+          <div>
+            <h1>Dashboard</h1>
+            <p class="view-sub" id="dashboardSub">Vue d'ensemble de votre bankroll</p>
+          </div>
+          <div class="period-picker" role="tablist" aria-label="Période">
+            <button class="period-btn" data-period="7">7j</button>
+            <button class="period-btn" data-period="30">30j</button>
+            <button class="period-btn" data-period="90">90j</button>
+            <button class="period-btn active" data-period="all">Tout</button>
+          </div>
+        </header>
+
+        <div class="kpi-grid" id="kpiGrid"><!-- KPI cards injectées --></div>
+
+        <div class="panel chart-panel">
+          <div class="panel-head">
+            <h2>Évolution de la bankroll</h2>
+          </div>
+          <div class="chart-wrap"><canvas id="bankrollChart" height="280"></canvas></div>
+        </div>
+
+        <div class="panel-row">
+          <div class="panel">
+            <div class="panel-head"><h2>Par sport</h2></div>
+            <div class="chart-wrap sm"><canvas id="sportChart"></canvas></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>Par bookmaker</h2></div>
+            <div class="chart-wrap sm"><canvas id="bookmakerChart"></canvas></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Derniers paris</h2>
+            <button class="btn-ghost" data-goto="bets">Tout voir →</button>
+          </div>
+          <div id="recentBets"></div>
+        </div>
+      </section>
+
+      <!-- Bets -->
+      <section class="view" id="view-bets">
+        <header class="view-header">
+          <div>
+            <h1>Mes paris</h1>
+            <p class="view-sub" id="betsCount">—</p>
+          </div>
+        </header>
+
+        <div class="filters" id="betFilters">
+          <select id="filterStatus" class="select">
+            <option value="">Statut · tous</option>
+            <option value="pending">En attente</option>
+            <option value="won">Gagnés</option>
+            <option value="lost">Perdus</option>
+            <option value="void">Annulés</option>
+            <option value="cashout">Cash out</option>
+          </select>
+          <select id="filterSport" class="select"><option value="">Sport · tous</option></select>
+          <select id="filterBookmaker" class="select"><option value="">Bookmaker · tous</option></select>
+          <select id="filterType" class="select">
+            <option value="">Type · tous</option>
+            <option value="simple">Simple</option>
+            <option value="combine">Combiné</option>
+            <option value="systeme">Système</option>
+          </select>
+          <input type="search" id="filterSearch" class="input search" placeholder="Rechercher un match, une équipe…">
+        </div>
+
+        <div class="panel">
+          <div id="betsList"></div>
+        </div>
+      </section>
+
+      <!-- Coach -->
+      <section class="view" id="view-coach">
+        <header class="view-header">
+          <div>
+            <h1>Coach IA</h1>
+            <p class="view-sub">Analyse comportementale de vos paris par Gemini</p>
+          </div>
+          <button class="btn-primary" id="runCoach">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            Analyser mes paris
+          </button>
+        </header>
+        <div id="coachContent">
+          <div class="empty-state">
+            <p>Le Coach analyse votre historique et détecte vos biais : sports déficitaires, combinés trop longs, mises irrégulières…</p>
+            <p class="empty-hint">Nécessite une clé API Gemini (Réglages) et au moins 5 paris terminés.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Radar IA -->
+      <section class="view" id="view-advisor">
+        <header class="view-header">
+          <div>
+            <h1>Radar IA</h1>
+            <p class="view-sub">Détection de value bets par Gemini + recherche Google en temps réel</p>
+          </div>
+        </header>
+
+        <div class="panel advisor-controls">
+          <div class="advisor-controls-grid">
+            <div class="field">
+              <label for="advSports">Sports</label>
+              <select id="advSports" class="select full">
+                <option value="Football, Tennis, Basketball">Foot · Tennis · Basket</option>
+                <option value="Football">Football uniquement</option>
+                <option value="Tennis">Tennis uniquement</option>
+                <option value="Basketball">Basketball uniquement</option>
+                <option value="Football, Tennis, Basketball, Rugby, Hockey sur glace, MMA">Tous les sports</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="advHorizon">Fenêtre</label>
+              <select id="advHorizon" class="select full">
+                <option value="24">24 heures</option>
+                <option value="48" selected>48 heures</option>
+                <option value="72">72 heures</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="advProfile">Profil de risque</label>
+              <select id="advProfile" class="select full">
+                <option value="prudent">Prudent · mise ≤ 1 %</option>
+                <option value="equilibre" selected>Équilibré · mise ≤ 2 %</option>
+                <option value="agressif">Agressif · mise ≤ 3 %</option>
+              </select>
+            </div>
+            <div class="field advisor-run">
+              <label>&nbsp;</label>
+              <button class="btn-primary" id="runAdvisor">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="15" height="15"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                Lancer le radar
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="advisorContent">
+          <div class="empty-state">
+            <p>Le Radar recherche sur Google les matchs à venir, les blessures, la forme et les cotes actuelles, puis ne retient que les paris à <strong>value positive</strong> (cote supérieure à la probabilité réelle estimée). La mise conseillée est calculée par Kelly fractionné selon votre bankroll.</p>
+            <p class="empty-hint">S'il n'y a pas de value fiable sur la période, le Radar ne propose rien — c'est voulu.</p>
+          </div>
+        </div>
+
+        <p class="advisor-disclaimer">Aucune IA ne prédit le sport de façon fiable : ces suggestions sont des analyses probabilistes, pas des certitudes. Espérance de gain non garantie — ne pariez que ce que vous pouvez perdre. Besoin d'aide ? <a href="https://www.joueurs-info-service.fr" target="_blank" rel="noopener">joueurs-info-service.fr</a> · 09 74 75 13 13.</p>
+      </section>
+
+      <!-- Settings -->
+      <section class="view" id="view-settings">
+        <header class="view-header">
+          <div>
+            <h1>Réglages</h1>
+            <p class="view-sub">Configuration de l'application</p>
+          </div>
+        </header>
+
+        <div class="panel settings-panel">
+          <div class="panel-head"><h2>Bankroll</h2></div>
+          <div class="field">
+            <label for="setInitial">Capital initial (€)</label>
+            <input type="number" id="setInitial" class="input" min="0" step="0.01" placeholder="500">
+            <p class="field-hint">Point de départ du calcul du ROC et du graphique d'évolution.</p>
+          </div>
+        </div>
+
+        <div class="panel settings-panel">
+          <div class="panel-head"><h2>Intelligence artificielle</h2></div>
+          <div class="field">
+            <label for="setApiKey">Clé API Google Gemini</label>
+            <input type="password" id="setApiKey" class="input" placeholder="AIza…" autocomplete="off">
+            <p class="field-hint">Stockée uniquement sur cet appareil. Obtenez une clé gratuite sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</p>
+          </div>
+          <div class="field">
+            <label for="setModel">Modèle</label>
+            <select id="setModel" class="select full">
+              <option value="gemini-2.5-flash">Gemini 2.5 Flash (recommandé)</option>
+              <option value="gemini-2.5-pro">Gemini 2.5 Pro (plus précis, plus lent)</option>
+              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+            </select>
+          </div>
+          <button class="btn-ghost" id="testApi">Tester la connexion</button>
+          <span id="apiTestResult" class="api-test"></span>
+        </div>
+
+        <div class="panel settings-panel">
+          <div class="panel-head"><h2>Données</h2></div>
+          <div class="settings-actions">
+            <button class="btn-secondary" id="exportData">Exporter (JSON)</button>
+            <button class="btn-secondary" id="importDataBtn">Importer</button>
+            <input type="file" id="importData" accept=".json" hidden>
+            <button class="btn-danger" id="wipeData">Tout effacer</button>
+          </div>
+          <p class="field-hint">Vos données restent sur votre appareil (IndexedDB). Pensez à exporter régulièrement.</p>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Mobile bottom nav -->
+    <nav class="bottom-nav" aria-label="Navigation mobile">
+      <button class="nav-item active" data-view="dashboard" aria-label="Dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      </button>
+      <button class="nav-item" data-view="bets" aria-label="Mes paris">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"/></svg>
+      </button>
+      <button class="fab-mobile" id="fabMobile" aria-label="Ajouter un pari">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="nav-item" data-view="advisor" aria-label="Radar IA">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.5" fill="currentColor"/></svg>
+      </button>
+      <button class="nav-item" data-view="coach" aria-label="Coach IA">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+      </button>
+      <button class="nav-item" data-view="settings" aria-label="Réglages">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4m0 14v4M4.2 4.2l2.8 2.8m10 10l2.8 2.8M1 12h4m14 0h4M4.2 19.8l2.8-2.8m10-10l2.8-2.8"/></svg>
+      </button>
+    </nav>
+
+    <!-- FAB desktop -->
+    <button class="fab" id="fab" aria-label="Ajouter un pari">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      <span>Ajouter un pari</span>
+    </button>
+
+  </div>
+
+  <!-- ===== Modal : ajout / édition de pari ===== -->
+  <div class="modal-backdrop" id="betModal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="betModalTitle">
+      <div class="modal-head">
+        <h2 id="betModalTitle">Nouveau pari</h2>
+        <button class="btn-icon" id="closeBetModal" aria-label="Fermer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Smart Scan -->
+      <div class="dropzone" id="dropzone" tabindex="0">
+        <div class="dropzone-inner" id="dropzoneIdle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" class="dropzone-icon"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          <p><strong>Smart Scan</strong> — glissez la capture de votre ticket ici</p>
+          <p class="dropzone-hint hide-touch">ou <kbd>Ctrl</kbd>+<kbd>V</kbd> pour coller · <button type="button" class="link-btn" id="browseBtn">parcourir</button></p>
+          <div class="dropzone-mobile-actions">
+            <button type="button" class="btn-secondary" id="pasteBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+              Coller la capture
+            </button>
+            <button type="button" class="btn-secondary show-touch" id="photosBtn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              Depuis Photos
+            </button>
+          </div>
+          <input type="file" id="fileInput" accept="image/*" hidden>
+        </div>
+        <div class="dropzone-inner scanning" id="dropzoneScanning" hidden>
+          <div class="scan-preview"><img id="scanPreview" alt="Ticket en cours d'analyse"></div>
+          <div class="scan-status">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>Gemini analyse votre ticket…</span>
+          </div>
+        </div>
+      </div>
+      <div class="scan-error" id="scanError" hidden></div>
+
+      <form id="betForm" class="bet-form">
+        <input type="hidden" id="betId">
+        <div class="form-grid">
+          <div class="field">
+            <label for="fDate">Date</label>
+            <input type="date" id="fDate" class="input" required>
+          </div>
+          <div class="field">
+            <label for="fBookmaker">Bookmaker</label>
+            <input type="text" id="fBookmaker" class="input" list="bookmakerList" placeholder="Winamax" required>
+            <datalist id="bookmakerList">
+              <option>Winamax</option><option>Betclic</option><option>Unibet</option>
+              <option>ParionsSport</option><option>PMU</option><option>Zebet</option>
+              <option>Bwin</option><option>PokerStars Sports</option><option>Olybet</option>
+            </datalist>
+          </div>
+          <div class="field">
+            <label for="fSport">Sport</label>
+            <input type="text" id="fSport" class="input" list="sportList" placeholder="Football" required>
+            <datalist id="sportList">
+              <option>Football</option><option>Tennis</option><option>Basketball</option>
+              <option>Rugby</option><option>Hockey</option><option>MMA</option>
+              <option>Baseball</option><option>Handball</option><option>eSport</option>
+            </datalist>
+          </div>
+          <div class="field">
+            <label for="fCompetition">Compétition <span class="opt">optionnel</span></label>
+            <input type="text" id="fCompetition" class="input" placeholder="Ligue 1">
+          </div>
+          <div class="field span-2">
+            <label for="fEvent">Match / Événement</label>
+            <input type="text" id="fEvent" class="input" placeholder="PSG – OM" required>
+          </div>
+          <div class="field span-2">
+            <label for="fSelection">Pari (sélection)</label>
+            <input type="text" id="fSelection" class="input" placeholder="Victoire PSG & +2,5 buts" required>
+          </div>
+          <div class="field">
+            <label for="fType">Type</label>
+            <select id="fType" class="select full">
+              <option value="simple">Simple</option>
+              <option value="combine">Combiné</option>
+              <option value="systeme">Système</option>
+            </select>
+          </div>
+          <div class="field" id="legsField" hidden>
+            <label for="fLegs">Nb de sélections</label>
+            <input type="number" id="fLegs" class="input" min="2" step="1" value="2">
+          </div>
+          <div class="field">
+            <label for="fOdds">Cote</label>
+            <input type="number" id="fOdds" class="input mono" min="1.01" step="0.01" placeholder="1.85" required>
+          </div>
+          <div class="field">
+            <label for="fStake">Mise (€)</label>
+            <input type="number" id="fStake" class="input mono" min="0.1" step="0.01" placeholder="50" required>
+          </div>
+          <div class="field">
+            <label for="fStatus">Statut</label>
+            <select id="fStatus" class="select full">
+              <option value="pending">En attente</option>
+              <option value="won">Gagné</option>
+              <option value="lost">Perdu</option>
+              <option value="void">Annulé / Remboursé</option>
+              <option value="cashout">Cash out</option>
+            </select>
+          </div>
+          <div class="field" id="payoutField" hidden>
+            <label for="fPayout">Montant récupéré (€)</label>
+            <input type="number" id="fPayout" class="input mono" min="0" step="0.01">
+          </div>
+        </div>
+        <div class="potential-gain" id="potentialGain" hidden></div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" id="cancelBet">Annuler</button>
+          <button type="submit" class="btn-primary" id="saveBet">Valider le pari</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/gemini.js"></script>
+  <script src="js/advisor.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

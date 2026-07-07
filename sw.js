@@ -1,6 +1,6 @@
 /* BetSmart AI — Service Worker
    Stratégie : cache-first pour le shell, network-first pour les CDN. */
-const CACHE = 'betsmart-v10';
+const CACHE = 'betsmart-v11';
 const SHELL = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const SHELL = [
   './js/gemini.js',
   './js/settle.js',
   './js/odds.js',
+  './js/coteur.js',
   './js/advisor.js',
   './js/app.js',
   './manifest.webmanifest',
@@ -37,9 +38,9 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  // Ne jamais intercepter les API Google (Gemini, Firebase Auth/Firestore)
-  if (url.hostname.endsWith('googleapis.com') || url.hostname.endsWith('firebaseapp.com') || url.hostname.endsWith('the-odds-api.com')) return;
-  if (e.request.method !== 'GET') return;
+  // Ne jamais intercepter les API externes (Gemini, Firebase, cotes, proxies CORS)
+  const bypass = ['googleapis.com', 'firebaseapp.com', 'the-odds-api.com', 'coteur.com', 'allorigins.win', 'corsproxy.io', 'thingproxy.freeboard.io'];
+  if (bypass.some((h) => url.hostname.endsWith(h)) || e.request.method !== 'GET') return;
 
   e.respondWith(
     caches.match(e.request).then((cached) => {

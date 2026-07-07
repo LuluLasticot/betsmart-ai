@@ -670,6 +670,19 @@ kbd {
 .live-chip.best strong { color: var(--accent); }
 .live-warn { font-size: 11.5px; color: var(--amber); }
 
+/* Comparateur de cotes */
+.comparator-controls { display: flex; gap: 8px; }
+.comparator-grid, .col-headers.comparator-grid { grid-template-columns: minmax(0, 1fr) 72px 72px 72px; }
+.cmp-odd { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.cmp-odd .v { font: 600 13px var(--mono); }
+.cmp-odd .b { font-size: 10px; color: var(--text-3); }
+.cmp-odd.empty { color: var(--text-3); font-family: var(--mono); }
+
+@media (max-width: 600px) {
+  .comparator-grid, .col-headers.comparator-grid { grid-template-columns: minmax(0, 1fr) 66px 66px; }
+  .comparator-controls { flex-direction: column; }
+}
+
 .pick-analysis { font-size: 13px; color: var(--text-2); margin-bottom: 10px; }
 .pick-risks { font-size: 12.5px; color: var(--text-3); margin-bottom: 12px; }
 .pick-risks strong { color: var(--amber); font-weight: 600; }

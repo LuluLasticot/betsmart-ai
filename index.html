@@ -274,6 +274,26 @@
           </div>
         </div>
 
+        <div class="panel" id="comparatorPanel">
+          <div class="panel-head">
+            <h2>Comparateur de cotes en direct</h2>
+            <div class="comparator-controls">
+              <select id="comparatorSport" class="select">
+                <option value="football">Football</option>
+                <option value="tennis">Tennis</option>
+                <option value="basketball">Basket</option>
+                <option value="rugby">Rugby</option>
+                <option value="handball">Handball</option>
+                <option value="hockey">Hockey</option>
+              </select>
+              <button class="btn-secondary" id="loadComparator">Charger</button>
+            </div>
+          </div>
+          <div id="comparatorContent">
+            <p class="field-hint">Cotes réelles des bookmakers français agrégées depuis coteur.com. Choisissez un sport et cliquez sur Charger.</p>
+          </div>
+        </div>
+
         <div id="advisorContent">
           <div class="empty-state">
             <p>Le Radar recherche sur Google les matchs à venir, les blessures, la forme et les cotes actuelles, puis ne retient que les paris à <strong>value positive</strong> (cote supérieure à la probabilité réelle estimée). La mise conseillée est calculée par Kelly fractionné selon votre bankroll. Chaque pick est mémorisé : le Radar mesure sa propre fiabilité et se corrige au fil de ses erreurs.</p>
@@ -346,9 +366,18 @@
           <button class="btn-ghost" id="testApi">Tester la connexion</button>
           <span id="apiTestResult" class="api-test"></span>
           <div class="field" style="margin-top:14px">
-            <label for="setOddsKey">Clé The Odds API <span class="opt">cotes en temps réel</span></label>
+            <label for="setOddsSource">Source des cotes en temps réel</label>
+            <select id="setOddsSource" class="select full">
+              <option value="coteur">Coteur.com — le plus complet (usage privé)</option>
+              <option value="oddsapi">The Odds API — officiel, clé requise</option>
+              <option value="none">Désactivé (cotes estimées par l'IA)</option>
+            </select>
+            <p class="field-hint" id="oddsSourceHint">Coteur agrège les cotes réelles de tous les books FR (Winamax, Betclic, Unibet, PMU…) sur de nombreux marchés. Aucune clé requise. Réservé à un usage privé (scraping non déployable publiquement).</p>
+          </div>
+          <div class="field" id="oddsKeyField" hidden>
+            <label for="setOddsKey">Clé The Odds API</label>
             <input type="password" id="setOddsKey" class="input" placeholder="Clé The Odds API" autocomplete="off">
-            <p class="field-hint">Vérifie les cotes réelles de <strong>Winamax, Betclic, Unibet</strong> (+ PMU, NetBet) sur les picks du Radar. Clé gratuite (500 crédits/mois) sur <a href="https://the-odds-api.com/#get-access" target="_blank" rel="noopener">the-odds-api.com</a>.</p>
+            <p class="field-hint">Clé gratuite (500 crédits/mois) sur <a href="https://the-odds-api.com/#get-access" target="_blank" rel="noopener">the-odds-api.com</a>.</p>
           </div>
         </div>
 
@@ -634,6 +663,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
   <script src="js/db.js"></script>
   <script src="js/firebase-config.js"></script>
   <script src="js/cloud.js"></script>
@@ -641,6 +671,7 @@
   <script src="js/gemini.js"></script>
   <script src="js/settle.js"></script>
   <script src="js/odds.js"></script>
+  <script src="js/coteur.js"></script>
   <script src="js/advisor.js"></script>
   <script src="js/app.js"></script>
 </body>

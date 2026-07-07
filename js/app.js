@@ -12,7 +12,7 @@
     bets: [],
     txs: [],
     picks: [],
-    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', model: 'gemini-2.5-flash', bookrolls: [] },
+    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [] },
     period: 'all',
     view: 'dashboard',
     charts: {},
@@ -1112,8 +1112,41 @@
     $('#analyzeMatch').addEventListener('click', runMatchAnalysis);
     $('#matchQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runMatchAnalysis(); } });
     $('#settlePicks').addEventListener('click', settleRadarPicks);
+    $('#loadComparator').addEventListener('click', loadComparator);
     renderRadarPerf();
     restoreLastRadar();
+  }
+
+  /* ---- Comparateur de cotes en direct (coteur.com) ---- */
+  async function loadComparator() {
+    const sport = $('#comparatorSport').value;
+    const container = $('#comparatorContent');
+    const btn = $('#loadComparator');
+    btn.disabled = true;
+    container.innerHTML = '<div class="coach-loading"><span class="spinner"></span>Récupération des cotes en direct depuis coteur.com…</div>';
+
+    try {
+      const events = await Coteur.getUpcomingEvents(sport, { limit: 20 });
+      if (!events.length) {
+        container.innerHTML = '<div class="empty-state"><p>Aucun match trouvé — les proxies CORS publics sont peut-être temporairement bloqués. Réessayez dans un instant.</p></div>';
+        return;
+      }
+      const withOdds = events.filter((e) => e.odds && (e.odds.home || e.odds.away));
+      container.innerHTML = `<div class="col-headers comparator-grid"><span>Match</span><span class="r">1</span><span class="r hide-m">N</span><span class="r">2</span></div>`
+        + events.map((e) => {
+          const cell = (o) => o ? `<div class="cmp-odd"><span class="v">${o.price.toFixed(2)}</span><span class="b">${escapeHTML(o.book)}</span></div>` : '<div class="cmp-odd empty">—</div>';
+          const dateTxt = e.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + e.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+          return `<div class="bet-row comparator-grid">
+            <div class="bet-main"><div class="bet-event">${escapeHTML(e.teamA)} – ${escapeHTML(e.teamB)}</div><div class="bet-meta">${escapeHTML(e.league)} · ${dateTxt}</div></div>
+            ${cell(e.odds?.home)}${(() => { const c = cell(e.odds?.draw); return c.replace('cmp-odd', 'cmp-odd hide-m'); })()}${cell(e.odds?.away)}
+          </div>`;
+        }).join('')
+        + `<p class="field-hint" style="margin-top:10px">${withOdds.length}/${events.length} matchs avec cotes · meilleure cote du marché FR affichée · source coteur.com</p>`;
+    } catch (err) {
+      container.innerHTML = `<div class="empty-state"><p>Comparateur indisponible : ${escapeHTML(err.message)}</p></div>`;
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function buildAdvisorCtx() {
@@ -1202,15 +1235,29 @@
     renderAdvisorResult(last.result, last.profileKey, last.bankroll, last.at);
   }
 
-  /* ---- Vérification des cotes en temps réel (The Odds API) ---- */
+  /* ---- Provider de cotes unifié (Coteur / The Odds API) ---- */
+  function oddsProviderReady() {
+    const src = state.settings.oddsSource;
+    if (src === 'coteur') return true;               // aucune clé requise
+    if (src === 'oddsapi') return !!state.settings.oddsApiKey;
+    return false;                                     // 'none'
+  }
+
+  function verifyPickLive(pick) {
+    const src = state.settings.oddsSource;
+    if (src === 'coteur') return Coteur.verifyPick(null, pick);
+    if (src === 'oddsapi') return Odds.verifyPick(state.settings.oddsApiKey, pick);
+    return Promise.resolve({ status: 'disabled' });
+  }
+
+  /* ---- Vérification des cotes en temps réel (provider sélectionné) ---- */
   async function verifyLiveOdds(result, profileKey, bankroll, at) {
-    const key = state.settings.oddsApiKey;
-    if (!key || !result.picks.length) return;
+    if (!oddsProviderReady() || !result.picks.length) return;
 
     let touched = false;
     for (const p of result.picks) {
       try {
-        const v = await Odds.verifyPick(key, p);
+        const v = await verifyPickLive(p);
         if (v.status !== 'ok') { p.live = { status: v.status }; continue; }
 
         p.live = { prices: v.prices, checkedAt: Date.now() };
@@ -1233,7 +1280,11 @@
 
     await DB.setSetting('lastRadar', { result, profileKey, bankroll, at });
     renderAdvisorResult(result, profileKey, bankroll, at);
-    if (touched) toast(`Cotes vérifiées en direct${Odds.quota() ? ` · ${Odds.quota()} crédits restants` : ''}`);
+    if (touched) {
+      const src = state.settings.oddsSource;
+      const note = src === 'coteur' ? ' via coteur.com' : (Odds.quota() ? ` · ${Odds.quota()} crédits restants` : '');
+      toast(`Cotes vérifiées en direct${note}`);
+    }
   }
 
   /* ---- Analyse d'un match précis ---- */
@@ -1250,10 +1301,10 @@
       const ctx = buildAdvisorCtx();
       const r = await Advisor.analyzeMatch(state.settings.apiKey, state.settings.model, ctx, query);
       // Vérification des marchés au prix réel avant affichage
-      if (state.settings.oddsApiKey && r.trouve && r.marches?.length) {
+      if (oddsProviderReady() && r.trouve && r.marches?.length) {
         for (const m of r.marches) {
           try {
-            const v = await Odds.verifyPick(state.settings.oddsApiKey, {
+            const v = await verifyPickLive({
               sport: r.sport, competition: r.competition, match: r.match,
               date_match: r.date_match, selection: m.selection, marche: m.marche
             });
@@ -1541,6 +1592,13 @@
       }
     });
 
+    $('#setOddsSource').addEventListener('change', async () => {
+      state.settings.oddsSource = $('#setOddsSource').value;
+      await DB.setSetting('oddsSource', state.settings.oddsSource);
+      syncOddsSourceUI();
+      toast('Source des cotes mise à jour');
+    });
+
     $('#setModel').addEventListener('change', async () => {
       state.settings.model = $('#setModel').value;
       await DB.setSetting('model', state.settings.model);
@@ -1607,8 +1665,22 @@
   function bindSettingsValues() {
     $('#setApiKey').value = state.settings.apiKey;
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
+    $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setModel').value = state.settings.model;
     syncInitialField();
+    syncOddsSourceUI();
+  }
+
+  function syncOddsSourceUI() {
+    const src = state.settings.oddsSource || 'coteur';
+    $('#oddsKeyField').hidden = src !== 'oddsapi';
+    const hints = {
+      coteur: 'Coteur agrège les cotes réelles de tous les books FR (Winamax, Betclic, Unibet, PMU…) sur de nombreux marchés. Aucune clé requise. Réservé à un usage privé (scraping non déployable publiquement).',
+      oddsapi: 'API officielle : Winamax, Betclic, Unibet, PMU, NetBet. Nécessite une clé (500 crédits/mois gratuits).',
+      none: 'Les cotes restent celles estimées par l\'IA (non vérifiées).'
+    };
+    $('#oddsSourceHint').textContent = hints[src];
+    $('#comparatorPanel').style.display = src === 'coteur' ? '' : 'none';
   }
 
   /** Le capital global devient la somme des books dès qu'au moins un est défini. */

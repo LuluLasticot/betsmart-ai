@@ -677,6 +677,8 @@ kbd {
 .cmp-odd .v { font: 600 13px var(--mono); }
 .cmp-odd .b { font-size: 10px; color: var(--text-3); }
 .cmp-odd.empty { color: var(--text-3); font-family: var(--mono); }
+.cmp-odd.notmine { opacity: 0.4; }
+.cmp-odd.notmine .b::after { content: ' ·'; }
 
 @media (max-width: 600px) {
   .comparator-grid, .col-headers.comparator-grid { grid-template-columns: minmax(0, 1fr) 66px 66px; }

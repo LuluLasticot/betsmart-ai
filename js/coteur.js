@@ -207,12 +207,16 @@ const Coteur = (() => {
    *   1N2 : '1'=domicile, '0'=nul, '2'=extérieur
    *   OU  : '3'=OVER (plus de), '2'=UNDER (moins de) ; special '2-5' = 2,5
    */
-  function bestForOutcome(entry, keys, { frOnly = true } = {}) {
+  function bestForOutcome(entry, keys, { frOnly = true, allowed = null } = {}) {
     if (!entry) return null;
     const src = (frOnly && entry.bestfr) ? entry.bestfr : (entry.best || entry.bestfr || {});
     for (const k of keys) {
       const o = src[k];
-      if (o && Number(o.cote) > 1) return { book: bookName(o.bookId), price: Number(o.cote), bookId: o.bookId, fr: true };
+      if (o && Number(o.cote) > 1) {
+        const name = bookName(o.bookId);
+        const mine = !allowed || allowed.has(norm(name));
+        return { book: name, price: Number(o.cote), bookId: o.bookId, fr: true, mine, notMine: !mine };
+      }
     }
     return null;
   }
@@ -248,8 +252,15 @@ const Coteur = (() => {
      API publique
      ------------------------------------------------------------------ */
 
+  /** Ensemble de noms de books autorisés (normalisés) depuis une liste. */
+  function allowedSet(bookNames) {
+    if (!Array.isArray(bookNames) || !bookNames.length) return null;
+    return new Set(bookNames.map((b) => norm(b)).filter(Boolean));
+  }
+
   /** Vérifie un pick → cotes réelles par book (interface compatible Odds). */
-  async function verifyPick(_key, pick) {
+  async function verifyPick(_key, pick, opts = {}) {
+    const allowed = opts.allowed || allowedSet(opts.books);
     const page = SPORT_PAGES[norm(pick.sport).split(' ')[0]];
     if (!page) return { status: 'no_league' };
 
@@ -276,14 +287,18 @@ const Coteur = (() => {
       : (betEntry(raw, '1n2') || betEntry(raw, '12'));
     if (!entry) return { status: 'no_market', event: found };
 
-    const best = bestForOutcome(entry, target.keys);
+    const best = bestForOutcome(entry, target.keys, { allowed });
     if (!best) return { status: 'no_market', event: found };
+
+    // Meilleure cote FR chez un book non configuré par l'utilisateur
+    if (best.notMine) return { status: 'not_my_book', event: found, best, market: target.typename, source: 'coteur' };
 
     return { status: 'ok', event: found, prices: [best], best, market: target.typename, source: 'coteur' };
   }
 
   /** Liste des prochains matchs d'un sport avec meilleures cotes 1N2 (comparateur). */
-  async function getUpcomingEvents(sport, { limit = 20, withOdds = true, concurrency = 3 } = {}) {
+  async function getUpcomingEvents(sport, { limit = 20, withOdds = true, concurrency = 3, books = null } = {}) {
+    const allowed = allowedSet(books);
     const page = SPORT_PAGES[norm(sport).split(' ')[0]] || SPORT_PAGES.football;
     const matches = (await getMatchList(page))
       .filter((m) => m.date.getTime() > Date.now() - 3 * 3600e3)
@@ -304,9 +319,9 @@ const Coteur = (() => {
           return {
             ...m,
             odds: {
-              home: bestForOutcome(entry, ['1']),
-              draw: bestForOutcome(entry, ['0']),
-              away: bestForOutcome(entry, ['2'])
+              home: bestForOutcome(entry, ['1'], { allowed }),
+              draw: bestForOutcome(entry, ['0'], { allowed }),
+              away: bestForOutcome(entry, ['2'], { allowed })
             }
           };
         } catch (_) { return { ...m, odds: null }; }

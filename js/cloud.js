@@ -12,7 +12,7 @@
 
 const Cloud = (() => {
   const SDK = 'https://www.gstatic.com/firebasejs/11.6.1';
-  const SYNCED_SETTINGS = ['initialBankroll', 'bookrolls', 'model', 'apiKey', 'oddsApiKey', 'oddsSource'];
+  const SYNCED_SETTINGS = ['initialBankroll', 'bookrolls', 'model', 'apiKey', 'oddsApiKey', 'oddsSource', 'onlyMyBooks'];
 
   let mods = null;          // modules firebase importés
   let auth = null;

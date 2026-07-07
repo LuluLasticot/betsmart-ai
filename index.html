@@ -374,6 +374,10 @@
             </select>
             <p class="field-hint" id="oddsSourceHint">Coteur agrège les cotes réelles de tous les books FR (Winamax, Betclic, Unibet, PMU…) sur de nombreux marchés. Aucune clé requise. Réservé à un usage privé (scraping non déployable publiquement).</p>
           </div>
+          <label class="deep-toggle" id="onlyMyBooksField">
+            <input type="checkbox" id="setOnlyMyBooks" checked>
+            <span>Ne considérer que mes bookmakers (ceux de la répartition) pour la value</span>
+          </label>
           <div class="field" id="oddsKeyField" hidden>
             <label for="setOddsKey">Clé The Odds API</label>
             <input type="password" id="setOddsKey" class="input" placeholder="Clé The Odds API" autocomplete="off">

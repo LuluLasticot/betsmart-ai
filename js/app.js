@@ -1126,7 +1126,8 @@
     container.innerHTML = '<div class="coach-loading"><span class="spinner"></span>Récupération des cotes en direct depuis coteur.com…</div>';
 
     try {
-      const events = await Coteur.getUpcomingEvents(sport, { limit: 20 });
+      const books = state.settings.onlyMyBooks !== false ? userBookNames() : null;
+      const events = await Coteur.getUpcomingEvents(sport, { limit: 20, books });
       if (!events.length) {
         container.innerHTML = '<div class="empty-state"><p>Aucun match trouvé — les proxies CORS publics sont peut-être temporairement bloqués. Réessayez dans un instant.</p></div>';
         return;
@@ -1134,7 +1135,7 @@
       const withOdds = events.filter((e) => e.odds && (e.odds.home || e.odds.away));
       container.innerHTML = `<div class="col-headers comparator-grid"><span>Match</span><span class="r">1</span><span class="r hide-m">N</span><span class="r">2</span></div>`
         + events.map((e) => {
-          const cell = (o) => o ? `<div class="cmp-odd"><span class="v">${o.price.toFixed(2)}</span><span class="b">${escapeHTML(o.book)}</span></div>` : '<div class="cmp-odd empty">—</div>';
+          const cell = (o) => o ? `<div class="cmp-odd${o.notMine ? ' notmine' : ''}"><span class="v">${o.price.toFixed(2)}</span><span class="b">${escapeHTML(o.book)}</span></div>` : '<div class="cmp-odd empty">—</div>';
           const dateTxt = e.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + e.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
           return `<div class="bet-row comparator-grid">
             <div class="bet-main"><div class="bet-event">${escapeHTML(e.teamA)} – ${escapeHTML(e.teamB)}</div><div class="bet-meta">${escapeHTML(e.league)} · ${dateTxt}</div></div>
@@ -1243,11 +1244,29 @@
     return false;                                     // 'none'
   }
 
-  function verifyPickLive(pick) {
+  /** Noms des books configurés par l'utilisateur (répartition de la bankroll). */
+  function userBookNames() {
+    return (state.settings.bookrolls || []).map((b) => (b.name || '').trim()).filter(Boolean);
+  }
+
+  async function verifyPickLive(pick) {
     const src = state.settings.oddsSource;
-    if (src === 'coteur') return Coteur.verifyPick(null, pick);
-    if (src === 'oddsapi') return Odds.verifyPick(state.settings.oddsApiKey, pick);
-    return Promise.resolve({ status: 'disabled' });
+    const books = state.settings.onlyMyBooks !== false ? userBookNames() : null;
+
+    if (src === 'coteur') return Coteur.verifyPick(null, pick, { books });
+
+    if (src === 'oddsapi') {
+      const v = await Odds.verifyPick(state.settings.oddsApiKey, pick);
+      // Filtre les cotes aux books configurés (The Odds API donne le détail par book)
+      if (v.status === 'ok' && books && books.length) {
+        const set = new Set(books.map((b) => b.toLowerCase().replace(/\s+/g, '')));
+        const mine = v.prices.filter((p) => set.has(p.book.toLowerCase().replace(/\s+/g, '')));
+        if (!mine.length) return { status: 'not_my_book', event: v.event, best: v.best };
+        return { status: 'ok', event: v.event, prices: mine, best: mine[0], market: v.market, source: 'oddsapi' };
+      }
+      return v;
+    }
+    return { status: 'disabled' };
   }
 
   /* ---- Vérification des cotes en temps réel (provider sélectionné) ---- */
@@ -1258,6 +1277,7 @@
     for (const p of result.picks) {
       try {
         const v = await verifyPickLive(p);
+        if (v.status === 'not_my_book') { p.live = { status: 'not_my_book', best: v.best }; continue; }
         if (v.status !== 'ok') { p.live = { status: v.status }; continue; }
 
         p.live = { prices: v.prices, checkedAt: Date.now() };
@@ -1401,8 +1421,10 @@
         : p.cote_verifiee === false ? '<span class="pick-value-badge est">cote estimée</span>' : '';
       const liveLine = p.live?.prices
         ? `<div class="live-odds">${p.live.prices.map((x, j) => `<span class="live-chip ${j === 0 ? 'best' : ''}">${escapeHTML(x.book)} <strong>${x.price.toFixed(2)}</strong></span>`).join('')}${p.value_pct < 5 ? '<span class="live-warn">value réduite au prix réel — pick moins intéressant</span>' : ''}</div>`
-        : p.live?.status === 'no_match' || p.live?.status === 'no_league' || p.live?.status === 'no_events'
-          ? '<div class="live-odds"><span class="live-warn">cotes live indisponibles pour ce match</span></div>' : '';
+        : p.live?.status === 'not_my_book'
+          ? `<div class="live-odds"><span class="live-warn">meilleure cote FR chez ${escapeHTML(p.live.best?.book || 'un autre book')} (${p.live.best?.price ? p.live.best.price.toFixed(2) : '?'}) — pas dans vos bookmakers. Value non garantie chez vous.</span></div>`
+          : p.live?.status === 'no_match' || p.live?.status === 'no_league' || p.live?.status === 'no_events'
+            ? '<div class="live-odds"><span class="live-warn">cotes live indisponibles pour ce match</span></div>' : '';
 
       return `<div class="pick-card" data-pick="${i}">
         <div class="pick-top">
@@ -1599,6 +1621,12 @@
       toast('Source des cotes mise à jour');
     });
 
+    $('#setOnlyMyBooks').addEventListener('change', async () => {
+      state.settings.onlyMyBooks = $('#setOnlyMyBooks').checked;
+      await DB.setSetting('onlyMyBooks', state.settings.onlyMyBooks);
+      toast(state.settings.onlyMyBooks ? 'Value limitée à vos bookmakers' : 'Tous les bookmakers considérés');
+    });
+
     $('#setModel').addEventListener('change', async () => {
       state.settings.model = $('#setModel').value;
       await DB.setSetting('model', state.settings.model);
@@ -1666,6 +1694,7 @@
     $('#setApiKey').value = state.settings.apiKey;
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
+    $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;
     $('#setModel').value = state.settings.model;
     syncInitialField();
     syncOddsSourceUI();

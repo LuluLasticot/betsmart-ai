@@ -65,6 +65,20 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'page') {
+      const slug = String(req.query.slug || '').replace(/[^a-z0-9-]/gi, '');
+      const r = await fetch(`${COTEUR}/cote/${slug}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR,fr;q=0.9', 'Accept': 'text/html' } });
+      const html = await r.text();
+      res.setHeader('Cache-Control', 'no-store');
+      // renvoie les portions autour des noms de books connus
+      const idx = [];
+      for (const kw of ['Winamax', 'Betclic', 'Unibet', 'data-book', 'bookmaker-', 'cote-']) {
+        let p = html.indexOf(kw);
+        if (p >= 0) idx.push(html.slice(Math.max(0, p - 120), p + 240));
+      }
+      return res.status(200).json({ ok: true, len: html.length, around: idx });
+    }
+
     if (type === 'map') {
       // Cherche le mapping bookId→nom dans le HTML + bundles JS de coteur
       const home = await (await fetch(`${COTEUR}/cotes-foot`, { headers: { 'User-Agent': UA } })).text();

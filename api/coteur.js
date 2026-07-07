@@ -65,6 +65,22 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'livecfg') {
+      const pages = ['', 'cotes-foot', 'direct', 'live', 'football/direct', 'resultat-en-direct'];
+      const out = {};
+      for (const p of pages) {
+        try {
+          const html = await (await fetch(`${COTEUR}/${p}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR' } })).text();
+          const attrs = [...html.matchAll(/data-[a-z-]*(?:api-url|socket-url|url)-value="([^"]+)"/gi)].map((m) => m[0].slice(0, 160));
+          const ctrl = [...html.matchAll(/data-controller="[^"]*(?:live|score|direct)[^"]*"/gi)].map((m) => m[0]);
+          const node = (html.match(/https?:\/\/node[^"']+/g) || []).slice(0, 4);
+          if (attrs.length || ctrl.length || node.length) out[p || 'home'] = { attrs, ctrl, node };
+        } catch (e) { out[p] = String(e && e.message); }
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, out });
+    }
+
     if (type === 'js') {
       // Récupère les bundles JS et extrait la config socket.io (events, namespace, emit)
       const page = await (await fetch(`${COTEUR}/cote/argentine-egypte-1596595`, { headers: { 'User-Agent': UA } })).text();

@@ -83,7 +83,7 @@ module.exports = async (req, res) => {
           const js = await (await fetch(u, { headers: { 'User-Agent': UA } })).text();
           if (!/socket|\.emit\(|\.on\(|score/i.test(js)) continue;
           const found = [];
-          const re = /.{80}(?:subscribeToMatches|updateMatch|node-dev|\/live\/socket\.io|initSocket|fetchInitialData|rencontres).{200}/gi;
+          const re = /(?:subscribeToMatches",value:function.{0,220}|renc_id.{0,360}|fetchInitialData",value:.{0,320})/gi;
           let m; while ((m = re.exec(js)) && found.length < 20) found.push(m[0].replace(/\s+/g, ' '));
           if (found.length) snippets[u.split('/').pop()] = found;
         } catch (e) { snippets[u] = String(e && e.message); }

@@ -65,6 +65,40 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'info') {
+      const rid = String(req.query.id || '').replace(/\D/g, '') || '1596595';
+      const tok = generateToken();
+      // 1) getFullOdds → info (peut contenir le score en live)
+      const r1 = await fetch(`${ODDS_API}/${rid}`, { headers: { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/`, 'Origin': COTEUR } });
+      const t1 = await r1.text();
+      let full = null; try { full = JSON.parse(t1); } catch (_) {}
+      // repère toutes les clés contenant score/live/minute/period dans tout le payload
+      const hits = [];
+      const scan = (o, path) => {
+        if (!o || typeof o !== 'object' || hits.length > 40) return;
+        for (const k of Object.keys(o)) {
+          if (/score|live|minute|periode|period|status|etat|temps|half|mt/i.test(k)) hits.push(`${path}.${k} = ${JSON.stringify(o[k]).slice(0, 80)}`);
+          if (o[k] && typeof o[k] === 'object') scan(o[k], `${path}.${k}`);
+        }
+      };
+      if (full) scan(full, '');
+      // 2) endpoints live candidats spécifiques au match
+      const liveCands = [
+        `https://oddsv2.coteur.com/live/${rid}`,
+        `https://oddsv2.coteur.com/score/${rid}`,
+        `https://oddsv2.coteur.com/odds/getScore/${rid}`,
+        `https://oddsv2.coteur.com/rencontre/${rid}`,
+        `https://oddsv2.coteur.com/match/${rid}`
+      ];
+      const live = {};
+      for (const u of liveCands) {
+        try { const r = await fetch(u, { headers: { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/` } }); live[u] = { status: r.status, sample: (await r.text()).slice(0, 200) }; }
+        catch (e) { live[u] = { error: String(e && e.message) }; }
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, info: full?.info || null, scoreKeys: hits, liveEndpoints: live });
+    }
+
     if (type === 'odds') {
       if (!/^\d+$/.test(String(id))) return res.status(400).json({ ok: false, error: 'id invalide' });
       const token = generateToken();

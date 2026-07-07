@@ -86,6 +86,19 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true, probes: out });
     }
 
+    if (type === 'inspect') {
+      const slug = String(req.query.slug || '').replace(/[^a-z0-9-]/gi, '');
+      if (!slug) return res.status(400).json({ ok: false });
+      const r = await fetch(`${COTEUR}/cote/${slug}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR' } });
+      const html = await r.text();
+      // On renvoie seulement les fragments contenant des indices de mapping book
+      const frags = [];
+      const re = /(bookmaker[^"'<>]{0,40}|bookId["':\s]{0,4}\d+|"id":\s*\d+[^}]{0,60}"nom"[^}]{0,40}|data-book[^>]{0,60})/gi;
+      let m; while ((m = re.exec(html)) && frags.length < 200) frags.push(m[0]);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, len: html.length, frags });
+    }
+
     if (type === 'odds') {
       if (!/^\d+$/.test(String(id))) return res.status(400).json({ ok: false, error: 'id invalide' });
       const token = generateToken();

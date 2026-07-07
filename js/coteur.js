@@ -300,7 +300,8 @@ const Coteur = (() => {
   /** Liste des prochains matchs d'un sport avec meilleures cotes 1N2 (comparateur). */
   async function getUpcomingEvents(sport, { limit = 20, withOdds = true, concurrency = 3, books = null } = {}) {
     const allowed = allowedSet(books);
-    const page = SPORT_PAGES[norm(sport).split(' ')[0]] || SPORT_PAGES.football;
+    const page = SPORT_PAGES[norm(sport).split(' ')[0]];
+    if (!page) return []; // sport non couvert par coteur
     const matches = (await getMatchList(page))
       .filter((m) => m.date.getTime() > Date.now() - 3 * 3600e3)
       .sort((a, b) => a.date - b.date)

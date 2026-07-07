@@ -1188,6 +1188,37 @@
     };
   }
 
+  /** Rassemble les matchs et cotes réels de coteur pour les sports/fenêtre choisis. */
+  async function gatherCoteurCandidates(ctx) {
+    const sports = ctx.sports.split(',').map((s) => s.trim()).filter(Boolean);
+    const books = state.settings.onlyMyBooks !== false ? userBookNames() : null;
+    const horizonMs = Number(ctx.horizon) * 3600e3;
+    const now = Date.now();
+    const excluded = new Set(state.bets.filter((b) => b.status === 'pending').map((b) => (b.event || '').toLowerCase().replace(/\s+/g, ' ').trim()));
+
+    const perSport = Math.max(4, Math.floor(14 / sports.length));
+    const out = [];
+    for (const sport of sports) {
+      let events = [];
+      try { events = await Coteur.getUpcomingEvents(sport, { limit: perSport, books }); } catch (_) { continue; }
+      for (const e of events) {
+        if (!e.odds || (!e.odds.home && !e.odds.away)) continue;               // besoin d'au moins une cote
+        if (e.date.getTime() > now + horizonMs) continue;                       // dans la fenêtre
+        const label = `${e.teamA} – ${e.teamB}`;
+        if (excluded.has(label.toLowerCase())) continue;                        // déjà parié
+        out.push({
+          sport, competition: e.league, match: label,
+          date: e.date.toISOString().slice(0, 10),
+          heure: e.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+          cote_1: e.odds.home?.price ?? null,
+          cote_N: e.odds.draw?.price ?? null,
+          cote_2: e.odds.away?.price ?? null
+        });
+      }
+    }
+    return out.sort((a, b) => (a.date < b.date ? -1 : 1)).slice(0, 15);
+  }
+
   function renderRadarProgress(step) {
     const steps = [
       ['inventory', 'Inventaire des matchs de la fenêtre'],
@@ -1216,7 +1247,18 @@
     renderRadarProgress('inventory');
 
     try {
-      const result = await Advisor.suggest(state.settings.apiKey, state.settings.model, ctx, (step) => renderRadarProgress(step));
+      let result;
+      // Source coteur : on part des vrais matchs + cotes coteur, Gemini analyse.
+      if (state.settings.oddsSource === 'coteur') {
+        const candidates = await gatherCoteurCandidates(ctx);
+        if (candidates.length) {
+          result = await Advisor.suggestFromCoteur(state.settings.apiKey, state.settings.model, ctx, candidates, (step) => renderRadarProgress(step));
+        }
+      }
+      // Repli : inventaire Gemini classique (autres sources, ou coteur indisponible)
+      if (!result) {
+        result = await Advisor.suggest(state.settings.apiKey, state.settings.model, ctx, (step) => renderRadarProgress(step));
+      }
 
       // Mémorisation des picks (traçabilité + apprentissage)
       const savedIds = [];

@@ -215,6 +215,62 @@ Ne force JAMAIS un verdict "a_jouer" : la plupart des matchs ne présentent aucu
       .slice(0, 3);
   }
 
+  /* ------------------------------------------------------------------
+     Radar sourcé coteur : les matchs ET les cotes viennent de coteur.com,
+     Gemini ne fait qu'analyser et estimer les probabilités.
+     ------------------------------------------------------------------ */
+  function coteurPrompt(ctx, candidates) {
+    return `# RÔLE
+
+Tu es un analyste quantitatif senior spécialisé dans le value betting. Ta force : estimer des probabilités réelles calibrées. Les cotes te sont fournies (elles viennent de coteur.com, fiables) — tu ne les inventes pas.
+${ctx.feedback}
+
+# MATCHS RÉELS À ANALYSER (cotes 1N2 réelles issues de coteur.com, meilleur book FR)
+${JSON.stringify(candidates, null, 2)}
+
+# TRAVAIL, match par match (via Google Search)
+1. Enquête < 48 h : blessures, suspensions, compositions probables, turnover, forme réelle des 5 derniers matchs, enjeu, calendrier/fatigue, H2H pertinents, météo/surface si sensible.
+2. Estime la probabilité RÉELLE calibrée de chaque issue (domicile / nul / extérieur). Sois honnête sur ton incertitude.
+3. Calcule la value sur les COTES FOURNIES : value = probabilite × cote − 1 (utilise cote_1 pour domicile, cote_N pour nul, cote_2 pour extérieur).
+4. Tu peux aussi proposer un Over/Under buts si tu y vois une value nette (la cote sera vérifiée ensuite sur coteur).
+
+# SÉLECTION
+- Ne retiens QUE les paris avec value ≥ 5 % sur la cote fournie.
+- Cotes entre 1,40 et 4,50. Paris simples uniquement. Confiance 1-5 (< 3 = ne pas proposer).
+- Maximum 3 picks, classés par (value × confiance). Si rien ne dépasse le seuil : "picks": [] avec explication. L'abstention est une réponse de qualité.
+
+# CONTEXTE UTILISATEUR
+- Bankroll : ${ctx.bankroll} € · Profil : ${ctx.riskProfile}
+- Performance passée par sport : ${ctx.userPerf}
+
+# SORTIE — termine par un unique bloc \`\`\`json :
+\`\`\`json
+{
+  "analyse_marche": "2-3 phrases.",
+  "picks": [
+    {"sport":"Football","competition":"…","match":"Équipe A – Équipe B","date_match":"YYYY-MM-DD","heure_match":"HH:MM",
+     "marche":"1N2","selection":"Victoire Équipe A","cote":1.85,"bookmaker":"Winamax","probabilite":0.60,"value_pct":11.0,"confiance":4,
+     "analyse":"3-5 phrases factuelles issues de ta recherche.","risques":"1-2 phrases.","sources":["site — ce qui a été vérifié"]}
+  ]
+}
+\`\`\`
+Pour un pick 1N2, "cote" DOIT être exactement la cote fournie (cote_1/cote_N/cote_2). "match" DOIT reprendre le libellé exact fourni.`;
+  }
+
+  async function suggestFromCoteur(apiKey, model, ctx, candidates, onProgress) {
+    if (!candidates.length) {
+      return { analyse_marche: 'Aucun match coteur exploitable dans la fenêtre — élargissez la fenêtre ou les sports.', picks: [], candidats: [] };
+    }
+    onProgress?.('research', candidates);
+    const raw = await callGemini(apiKey, ctx.deepModel || model, coteurPrompt(ctx, candidates), { temperature: 0.25 });
+    const parsed = extractJSON(raw);
+    if (!parsed || !Array.isArray(parsed.picks)) throw new Error('Réponse du modèle illisible — réessayez.');
+    parsed.picks = validatePicks(parsed.picks);
+    parsed.candidats = candidates;
+    onProgress?.('done');
+    return parsed;
+  }
+
   async function suggest(apiKey, model, ctx, onProgress) {
     // Passe 1 : inventaire
     onProgress?.('inventory');
@@ -328,5 +384,5 @@ Ne force JAMAIS un verdict "a_jouer" : la plupart des matchs ne présentent aucu
     };
   }
 
-  return { suggest, analyzeMatch, stakeFor, radarStats, feedbackBlock, PROFILES };
+  return { suggest, suggestFromCoteur, analyzeMatch, stakeFor, radarStats, feedbackBlock, PROFILES };
 })();

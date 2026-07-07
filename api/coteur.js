@@ -83,8 +83,8 @@ module.exports = async (req, res) => {
           const js = await (await fetch(u, { headers: { 'User-Agent': UA } })).text();
           if (!/socket|\.emit\(|\.on\(|score/i.test(js)) continue;
           const found = [];
-          const re = /.{40}(?:socket\.io|io\(|\.emit\(|\.on\(\s*["'][^"']+["']|getScore|["'][a-zA-Z_]*score[a-zA-Z_]*["']|subscribe|joinRoom|["']live["']|namespace|idbw).{40}/gi;
-          let m; while ((m = re.exec(js)) && found.length < 30) found.push(m[0].replace(/\s+/g, ' '));
+          const re = /.{80}(?:subscribeToMatches|updateMatch|node-dev|\/live\/socket\.io|initSocket|fetchInitialData|rencontres).{200}/gi;
+          let m; while ((m = re.exec(js)) && found.length < 20) found.push(m[0].replace(/\s+/g, ' '));
           if (found.length) snippets[u.split('/').pop()] = found;
         } catch (e) { snippets[u] = String(e && e.message); }
       }

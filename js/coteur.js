@@ -31,14 +31,13 @@ const Coteur = (() => {
     hockey: 'cotes-hockey'
   };
 
-  // ID bookmaker coteur → nom lisible (étendre au besoin)
+  // ID bookmaker coteur → nom lisible. IDs validés en production ;
+  // les inconnus s'affichent « Cote FR » (jamais un mauvais nom).
   const BOOK_NAMES = {
-    21: 'bet365', 22: 'Winamax', 23: 'Betway', 24: 'Betclic', 25: 'Unibet',
-    33: 'Unibet BE', 36: '1xBet', 37: 'PMU', 43: 'Betsson', 44: 'Bwin', 45: 'Pinnacle',
-    26: 'ParionsSport', 27: 'Zebet', 28: 'Genybet', 29: 'Vbet', 30: 'Olybet', 41: 'Feelingbet'
+    22: 'Winamax', 24: 'Betclic', 25: 'Unibet', 33: 'Unibet', 37: 'PMU',
+    43: 'Betsson', 44: 'Bwin', 21: 'bet365', 45: 'Pinnacle', 36: '1xBet', 23: 'Betway'
   };
-  // Books français prioritaires pour la value
-  const FR_BOOKS = new Set(['Winamax', 'Betclic', 'Unibet', 'PMU', 'ParionsSport', 'Zebet', 'Genybet', 'Vbet', 'Olybet', 'Bwin', 'Betsson']);
+  const bookName = (id) => BOOK_NAMES[id] || 'Cote FR';
 
   const listCache = new Map();   // sport -> { at, matches }
   const oddsCache = new Map();   // rencId -> { at, data }
@@ -196,68 +195,53 @@ const Coteur = (() => {
      Réponse coteur : odds[] avec { typename, bestfr:{outcome:{bookId,cote}},
      best:{...}, et éventuellement une liste complète par book }
      ------------------------------------------------------------------ */
-  function betEntry(raw, typenames) {
-    for (const tn of typenames) {
-      const e = raw.odds.find((o) => o.typename === tn);
-      if (e) return e;
+  /** Trouve l'entrée de type de pari (typename + special éventuel). */
+  function betEntry(raw, typename, special) {
+    return raw.odds.find((o) => o.typename === typename && (special === undefined || o.special === special)) || null;
+  }
+
+  /**
+   * Structure réelle coteur : chaque entry a `bestfr` (meilleur book français
+   * par issue) et `best` (meilleur book global). Pas de liste complète par book.
+   * On renvoie la meilleure cote FR pour la première issue trouvée.
+   *   1N2 : '1'=domicile, '0'=nul, '2'=extérieur
+   *   OU  : '3'=OVER (plus de), '2'=UNDER (moins de) ; special '2-5' = 2,5
+   */
+  function bestForOutcome(entry, keys, { frOnly = true } = {}) {
+    if (!entry) return null;
+    const src = (frOnly && entry.bestfr) ? entry.bestfr : (entry.best || entry.bestfr || {});
+    for (const k of keys) {
+      const o = src[k];
+      if (o && Number(o.cote) > 1) return { book: bookName(o.bookId), price: Number(o.cote), bookId: o.bookId, fr: true };
     }
     return null;
   }
 
-  /** Cotes par book pour un outcome donné ('1','N','2', ou 'over'/'under'). */
-  function pricesForOutcome(entry, outcomeKeys) {
-    const prices = [];
-    const seen = new Set();
-
-    const push = (bookId, cote) => {
-      const v = parseFloat(String(cote));
-      const name = BOOK_NAMES[bookId] || `#${bookId}`;
-      if (!(v > 1) || seen.has(name)) return;
-      seen.add(name);
-      prices.push({ book: name, price: v, fr: FR_BOOKS.has(name) });
-    };
-
-    // 1) Structure complète par book si présente (odds/cotes/bookmakers)
-    const fullList = entry.cotes || entry.bookmakers || entry.all || null;
-    if (Array.isArray(fullList)) {
-      for (const b of fullList) {
-        const bookId = b.bookId ?? b.id;
-        for (const k of outcomeKeys) {
-          const c = b[k] ?? b.cotes?.[k] ?? b.odds?.[k];
-          if (c) { push(bookId, c); break; }
-        }
-      }
-    }
-
-    // 2) Repli sur bestfr / best (meilleur book par outcome) — chemin éprouvé
-    if (!prices.length) {
-      const best = entry.bestfr || entry.best || {};
-      for (const k of outcomeKeys) {
-        if (best[k]?.bookId && best[k]?.cote) push(best[k].bookId, best[k].cote);
-      }
-    }
-
-    prices.sort((a, b) => b.price - a.price);
-    return prices;
+  /** Compat : renvoie [meilleure cote FR] pour l'outcome (array pour l'UI). */
+  function pricesForOutcome(entry, keys) {
+    const b = bestForOutcome(entry, keys);
+    return b ? [b] : [];
   }
 
-  /** Détermine l'outcome coteur ciblé par la sélection du pick. */
+  /** Encode un seuil over/under au format coteur : 2.5 → "2-5", 3 → "3". */
+  const encodeThreshold = (thr) => String(thr).replace('.', '-');
+
+  /** Détermine le marché + issue coteur ciblés par la sélection du pick. */
   function resolveOutcome(pick, match) {
     const sel = norm(pick.selection);
-    // Over / Under
-    const thr = (String(pick.selection || '').match(/(\d+)[.,]5/) || [])[1];
-    if (thr && /\b(plus|moins|over|under)\b|but|point/.test(sel)) {
-      const dir = /plus|over/.test(sel) ? 'over' : 'under';
-      return { market: 'ou', threshold: `${thr}.5`, keys: [dir, dir === 'over' ? '+' : '-'] };
+    // Over / Under (buts/points) : special = seuil encodé, over='3', under='2'
+    const thrRaw = (String(pick.selection || '').match(/(\d+(?:[.,]\d)?)/) || [])[1];
+    if (thrRaw && /\b(plus|moins|over|under)\b|but|point/.test(sel)) {
+      const thr = thrRaw.replace(',', '.');
+      const over = /plus|over/.test(sel);
+      return { typename: 'OU', special: encodeThreshold(thr), keys: [over ? '3' : '2'] };
     }
     // Nul
-    if (/\bnul\b|draw|match nul/.test(sel)) return { market: '1n2', keys: ['N', '0'] };
-    // Victoire équipe → home (1) ou away (2)
+    if (/\bnul\b|draw|match nul/.test(sel)) return { typename: '1n2', keys: ['0'] };
+    // Victoire → domicile ('1') ou extérieur ('2')
     const selToks = toks(pick.selection.replace(/victoire|gagnant|vainqueur|gagne|win/gi, ''));
-    if (match && teamMatch(selToks, match.teamA)) return { market: '1n2', keys: ['1'] };
-    if (match && teamMatch(selToks, match.teamB)) return { market: '1n2', keys: ['2'] };
-    // Par défaut : côté 1
-    return { market: '1n2', keys: ['1'] };
+    if (match && teamMatch(selToks, match.teamB) && !teamMatch(selToks, match.teamA)) return { typename: '1n2', keys: ['2'] };
+    return { typename: '1n2', keys: ['1'] };
   }
 
   /* ------------------------------------------------------------------
@@ -287,18 +271,15 @@ const Coteur = (() => {
     if (!raw) return { status: 'no_market', event: found };
 
     const target = resolveOutcome(pick, found);
-    const entry = target.market === 'ou'
-      ? betEntry(raw, [`+/-${target.threshold}`, `ou${target.threshold}`, 'ou', `+/- ${target.threshold}`])
-      : betEntry(raw, ['1n2', '12']);
+    const entry = target.typename === 'OU'
+      ? betEntry(raw, 'OU', target.special)
+      : (betEntry(raw, '1n2') || betEntry(raw, '12'));
     if (!entry) return { status: 'no_market', event: found };
 
-    const prices = pricesForOutcome(entry, target.keys);
-    if (!prices.length) return { status: 'no_market', event: found };
+    const best = bestForOutcome(entry, target.keys);
+    if (!best) return { status: 'no_market', event: found };
 
-    // Priorité aux books français pour "best"
-    const frPrices = prices.filter((p) => p.fr);
-    const best = (frPrices[0] || prices[0]);
-    return { status: 'ok', event: found, prices: frPrices.length ? frPrices : prices, best, market: target.market, source: 'coteur' };
+    return { status: 'ok', event: found, prices: [best], best, market: target.typename, source: 'coteur' };
   }
 
   /** Liste des prochains matchs d'un sport avec meilleures cotes 1N2 (comparateur). */
@@ -318,14 +299,14 @@ const Coteur = (() => {
         try {
           const raw = await getFullOdds(m.rencId);
           if (!raw) return { ...m, odds: null };
-          const entry = betEntry(raw, ['1n2', '12']);
+          const entry = betEntry(raw, '1n2') || betEntry(raw, '12');
           if (!entry) return { ...m, odds: null };
           return {
             ...m,
             odds: {
-              home: pricesForOutcome(entry, ['1'])[0] || null,
-              draw: pricesForOutcome(entry, ['N', '0'])[0] || null,
-              away: pricesForOutcome(entry, ['2'])[0] || null
+              home: bestForOutcome(entry, ['1']),
+              draw: bestForOutcome(entry, ['0']),
+              away: bestForOutcome(entry, ['2'])
             }
           };
         } catch (_) { return { ...m, odds: null }; }
@@ -345,7 +326,7 @@ const Coteur = (() => {
   return {
     verifyPick, getUpcomingEvents, test, generateToken,
     // exposés pour tests
-    _parseMatchList: parseMatchList, _pricesForOutcome: pricesForOutcome,
+    _parseMatchList: parseMatchList, _bestForOutcome: bestForOutcome,
     _resolveOutcome: resolveOutcome, _betEntry: betEntry
   };
 })();

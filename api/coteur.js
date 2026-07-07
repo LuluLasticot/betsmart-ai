@@ -65,40 +65,6 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
-    if (type === 'books') {
-      // Découverte du mapping bookId → nom (essaie plusieurs endpoints connus de coteur)
-      const candidates = [
-        'https://oddsv2.coteur.com/bookmakers',
-        'https://oddsv2.coteur.com/books',
-        'https://oddsv2.coteur.com/bookmaker/list',
-        'https://www.coteur.com/api/bookmakers'
-      ];
-      const out = {};
-      for (const u of candidates) {
-        try {
-          const r = await fetch(u, { headers: { 'token': generateToken(), 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/` } });
-          const txt = await r.text();
-          let j = null; try { j = JSON.parse(txt); } catch (_) {}
-          out[u] = { status: r.status, sample: j ? JSON.stringify(j).slice(0, 1500) : txt.slice(0, 300) };
-        } catch (e) { out[u] = { error: String(e && e.message) }; }
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, probes: out });
-    }
-
-    if (type === 'inspect') {
-      const slug = String(req.query.slug || '').replace(/[^a-z0-9-]/gi, '');
-      if (!slug) return res.status(400).json({ ok: false });
-      const r = await fetch(`${COTEUR}/cote/${slug}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR' } });
-      const html = await r.text();
-      // On renvoie seulement les fragments contenant des indices de mapping book
-      const frags = [];
-      const re = /(bookmaker[^"'<>]{0,40}|bookId["':\s]{0,4}\d+|"id":\s*\d+[^}]{0,60}"nom"[^}]{0,40}|data-book[^>]{0,60})/gi;
-      let m; while ((m = re.exec(html)) && frags.length < 200) frags.push(m[0]);
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, len: html.length, frags });
-    }
-
     if (type === 'odds') {
       if (!/^\d+$/.test(String(id))) return res.status(400).json({ ok: false, error: 'id invalide' });
       const token = generateToken();

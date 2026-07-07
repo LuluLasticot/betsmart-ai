@@ -40,9 +40,22 @@ const Coteur = (() => {
   // Books français prioritaires pour la value
   const FR_BOOKS = new Set(['Winamax', 'Betclic', 'Unibet', 'PMU', 'ParionsSport', 'Zebet', 'Genybet', 'Vbet', 'Olybet', 'Bwin', 'Betsson']);
 
-  let quotaNote = null;
   const listCache = new Map();   // sport -> { at, matches }
   const oddsCache = new Map();   // rencId -> { at, data }
+
+  // Backend serverless privé (/api/coteur) : détecté une fois, puis mémorisé.
+  // Si présent → fetch direct côté serveur (pas de CORS, token en header, plus fiable).
+  // Sinon → repli sur les proxies CORS publics.
+  let backend = null; // null = inconnu, true/false = testé
+  async function hasBackend() {
+    if (backend !== null) return backend;
+    try {
+      const r = await fetch('/api/coteur?type=ping', { cache: 'no-store' });
+      const j = await r.json();
+      backend = !!j.ok;
+    } catch (_) { backend = false; }
+    return backend;
+  }
 
   /* ---- Normalisation & tokens (matching de noms) ---- */
   const norm = (s) => String(s || '').toLowerCase()
@@ -132,7 +145,17 @@ const Coteur = (() => {
   async function getMatchList(sportPage) {
     const cached = listCache.get(sportPage);
     if (cached && Date.now() - cached.at < 300e3) return cached.matches;
-    const html = await proxyFetch(`${COTEUR}/${sportPage}`);
+
+    let html = '';
+    if (await hasBackend()) {
+      try {
+        const r = await fetch(`/api/coteur?type=list&page=${encodeURIComponent(sportPage)}`);
+        const j = await r.json();
+        html = j.ok ? j.html : '';
+      } catch (_) { /* repli proxies */ }
+    }
+    if (!html) html = await proxyFetch(`${COTEUR}/${sportPage}`);
+
     const matches = parseMatchList(html);
     listCache.set(sportPage, { at: Date.now(), matches });
     return matches;
@@ -145,12 +168,25 @@ const Coteur = (() => {
     const cached = oddsCache.get(rencId);
     if (cached && Date.now() - cached.at < 300e3) return cached.data;
 
-    const token = generateToken();
-    const target = `${ODDS_API}/${rencId}?token=${encodeURIComponent(token)}`;
-    const body = await proxyFetch(target, { timeout: 9000 });
     let raw = null;
-    try { raw = JSON.parse(body); } catch (_) { return null; }
-    if (raw?.success === false || !Array.isArray(raw?.odds)) return null;
+
+    // 1) Backend serverless : token généré et envoyé en header côté serveur
+    if (await hasBackend()) {
+      try {
+        const r = await fetch(`/api/coteur?type=odds&id=${encodeURIComponent(rencId)}`);
+        const j = await r.json();
+        if (j.ok && Array.isArray(j.data?.odds)) raw = j.data;
+      } catch (_) { /* repli proxies */ }
+    }
+
+    // 2) Repli proxies publics (token généré côté client, en query param)
+    if (!raw) {
+      const token = generateToken();
+      const body = await proxyFetch(`${ODDS_API}/${rencId}?token=${encodeURIComponent(token)}`, { timeout: 9000 });
+      try { raw = JSON.parse(body); } catch (_) { return null; }
+    }
+
+    if (!raw || raw.success === false || !Array.isArray(raw.odds)) return null;
     oddsCache.set(rencId, { at: Date.now(), data: raw });
     return raw;
   }

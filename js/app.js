@@ -46,6 +46,7 @@
     bindAdvisor();
     bindSettle();
     bindPaste();
+    bindLive();
     maybeOnboard();
 
     renderAll();
@@ -265,6 +266,13 @@
     renderBookrollPanel();
     renderRecentBets(bets);
     renderSidebarBankroll();
+    updateLiveVisibility();
+  }
+
+  function updateLiveVisibility() {
+    const show = todaysPendingBets().length > 0;
+    if ($('#liveBox')) $('#liveBox').hidden = !show;
+    if ($('#liveBoxMobile')) $('#liveBoxMobile').hidden = !show;
   }
 
   function renderMonthlyChart(bets) {
@@ -971,6 +979,7 @@
     }
     closeBetModal();
     renderAll();
+    if (typeof refreshLive === 'function') refreshLive(false);
     toast(existing ? 'Pari mis à jour' : 'Pari enregistré ✓');
 
     // File de scans multiples : on enchaîne sur le ticket suivant
@@ -1755,6 +1764,80 @@
         toast('Bookmaker retiré');
       });
     });
+  }
+
+  /* ========================================================================
+     Scores en direct (paris en cours du jour)
+     ======================================================================== */
+  let liveTimer = null;
+
+  function bindLive() {
+    $('#liveRefresh').addEventListener('click', () => refreshLive(true));
+    // Rafraîchissement auto toutes les 90 s quand l'onglet est visible
+    liveTimer = setInterval(() => { if (!document.hidden) refreshLive(false); }, 90000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshLive(false); });
+    refreshLive(false);
+  }
+
+  /** Paris en attente dont le match est aujourd'hui (candidats au live). */
+  function todaysPendingBets() {
+    const today = new Date().toISOString().slice(0, 10);
+    const seen = new Set();
+    return state.bets.filter((b) => {
+      if (b.status !== 'pending' || b.date !== today) return false;
+      const key = `${b.event}`.toLowerCase();
+      if (seen.has(key)) return false; // dédoublonne les matchs (plusieurs paris même match)
+      seen.add(key);
+      return true;
+    });
+  }
+
+  async function refreshLive(manual) {
+    const matches = todaysPendingBets();
+    const show = matches.length > 0;
+    $('#liveBox').hidden = !show;
+    $('#liveBoxMobile').hidden = !show;
+    if (!show) return;
+
+    if (!state.settings.apiKey) {
+      const msg = '<p class="live-empty">Clé Gemini requise (Réglages) pour les scores live.</p>';
+      $('#liveBoxList').innerHTML = msg;
+      $('#liveBoxListMobile').innerHTML = msg;
+      return;
+    }
+
+    if (manual) $('#liveRefresh').classList.add('spinning');
+    try {
+      const scores = await Live.fetchScores(state.settings.apiKey, state.settings.model, matches);
+      renderLive(scores, matches);
+    } catch (err) {
+      const msg = `<p class="live-empty">Live indisponible${err.message.includes('Quota') ? ' (quota)' : ''}.</p>`;
+      $('#liveBoxList').innerHTML = msg;
+      $('#liveBoxListMobile').innerHTML = msg;
+    } finally {
+      setTimeout(() => $('#liveRefresh').classList.remove('spinning'), 600);
+    }
+  }
+
+  function renderLive(scores, matches) {
+    const byId = new Map(scores.map((s) => [String(s.id), s]));
+    const rows = matches.map((m) => {
+      const s = byId.get(String(m.id));
+      const shortTeams = escapeHTML((m.event || '').replace(/\s*[–—-]\s*/g, ' – '));
+      if (!s || s.etat === 'inconnu' || s.etat === 'a_venir') {
+        const label = s?.minute || 'à venir';
+        return `<div class="live-row"><span class="live-teams">${shortTeams}</span><span class="live-min done">${escapeHTML(label)}</span></div>`;
+      }
+      const score = `${s.score_dom ?? 0}–${s.score_ext ?? 0}`;
+      const minCls = s.etat === 'mi_temps' ? 'ht' : s.etat === 'termine' ? 'done' : '';
+      const min = s.etat === 'termine' ? 'Fin' : s.etat === 'mi_temps' ? 'MT' : (s.minute || '');
+      return `<div class="live-row"><span class="live-teams">${shortTeams}</span><span class="live-score">${escapeHTML(score)}</span><span class="live-min ${minCls}">${escapeHTML(min)}</span></div>`;
+    });
+
+    // Trie : en cours d'abord
+    const html = rows.join('') || '<p class="live-empty">Aucun match en cours.</p>';
+    $('#liveBoxList').innerHTML = html;
+    $('#liveBoxListMobile').innerHTML = html;
   }
 
   /* ========================================================================

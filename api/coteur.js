@@ -65,46 +65,6 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
-    if (type === 'livehtml') {
-      const paths = ['resultat-match-en-direct', 'scores-en-direct', 'live', 'football/live'];
-      const out = {};
-      for (const p of paths) {
-        try {
-          const r = await fetch(`${COTEUR}/${p}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR', 'Accept': 'text/html' } });
-          const html = await r.text();
-          // indices de score/minute rendus côté serveur
-          const scores = (html.match(/\b\d+\s*[-–:]\s*\d+\b/g) || []).slice(0, 8);
-          const mins = (html.match(/\b\d{1,3}['′]\b/g) || []).slice(0, 8);
-          const links = (html.match(/\/cote\/[a-z0-9-]+/gi) || []).slice(0, 6);
-          out[p] = { status: r.status, len: html.length, scores, mins, links };
-        } catch (e) { out[p] = { error: String(e && e.message) }; }
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, out });
-    }
-
-    if (type === 'liveprobe') {
-      const tok = generateToken();
-      const H = { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/`, 'Origin': COTEUR };
-      const cands = [
-        'https://oddsv2.coteur.com/live',
-        'https://oddsv2.coteur.com/live/getLive',
-        'https://oddsv2.coteur.com/score/live',
-        'https://oddsv2.coteur.com/livescore',
-        'https://oddsv2.coteur.com/odds/getLive',
-        'https://oddsv2.coteur.com/live/football',
-        'https://api.coteur.com/live',
-        'https://www.coteur.com/live/scores.json'
-      ];
-      const out = {};
-      for (const u of cands) {
-        try { const r = await fetch(u, { headers: H }); out[u] = { status: r.status, sample: (await r.text()).slice(0, 300) }; }
-        catch (e) { out[u] = { error: String(e && e.message) }; }
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, out });
-    }
-
     if (type === 'odds') {
       if (!/^\d+$/.test(String(id))) return res.status(400).json({ ok: false, error: 'id invalide' });
       const token = generateToken();

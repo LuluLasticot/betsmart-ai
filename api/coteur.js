@@ -68,22 +68,24 @@ module.exports = async (req, res) => {
     if (type === 'livesocket') {
       const ids = String(req.query.ids || '1596595').split(',').map((s) => s.replace(/\D/g, '')).filter(Boolean);
       let io; try { io = require('socket.io-client'); } catch (e) { return res.status(200).json({ ok: false, error: 'socket.io-client absent: ' + e.message }); }
-      const socket = io('https://node-dev.coteur.com', {
-        path: '/live/socket.io', transports: ['websocket'], reconnection: false, timeout: 6000,
-        extraHeaders: { 'Origin': COTEUR, 'User-Agent': UA }
+      const host = String(req.query.host || 'node-dev');
+      const url = host === 'oddsv2' ? 'https://oddsv2.coteur.com' : 'https://node-dev.coteur.com';
+      const socket = io(url, {
+        path: '/live/socket.io', reconnection: false, timeout: 6000, forceNew: true,
+        extraHeaders: { 'Origin': COTEUR, 'User-Agent': UA, 'Referer': `${COTEUR}/` }
       });
       const events = [];
       let connected = false, connErr = null;
       await new Promise((resolve) => {
         const done = () => { try { socket.close(); } catch (_) {} resolve(); };
-        const t = setTimeout(done, 7000);
+        const t = setTimeout(done, 7500);
         socket.on('connect', () => { connected = true; socket.emit('subscribe', ids); });
         socket.on('live', (e) => { events.push(e); });
         socket.on('connect_error', (err) => { connErr = String(err && (err.message || err.type || err)); });
         socket.on('error', (err) => { connErr = connErr || String(err); });
       });
       res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, connected, connErr, count: events.length, events: events.slice(0, 8) });
+      return res.status(200).json({ ok: true, url, connected, connErr, count: events.length, events: events.slice(0, 8) });
     }
 
     if (type === 'livecfg') {

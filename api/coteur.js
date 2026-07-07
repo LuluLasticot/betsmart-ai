@@ -65,6 +65,31 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'map') {
+      // Cherche le mapping bookId→nom dans le HTML + bundles JS de coteur
+      const home = await (await fetch(`${COTEUR}/cotes-foot`, { headers: { 'User-Agent': UA } })).text();
+      const scripts = [...home.matchAll(/<script[^>]+src="([^"]+\.js[^"]*)"/gi)].map((m) => m[1]);
+      const abs = scripts.map((s) => (s.startsWith('http') ? s : `${COTEUR}${s.startsWith('/') ? '' : '/'}${s}`));
+      const found = {};
+      const hits = [];
+      const KNOWN = ['winamax', 'betclic', 'unibet', 'pmu', 'parionssport', 'zebet', 'genybet', 'vbet', 'olybet', 'betsson', 'bwin', 'feelingbet', 'netbet', 'pinnacle', 'bet365', 'betway'];
+      for (const u of abs.slice(0, 25)) {
+        try {
+          const js = await (await fetch(u, { headers: { 'User-Agent': UA } })).text();
+          if (!/winamax|betclic|bookmaker/i.test(js)) continue;
+          // motifs {id:22,...,nom:"Winamax"...} ou "Winamax":22 ou variantes
+          const re = /\{[^{}]*?\b(?:id|bookId|bookmakerId)\b["'\s:]+(\d+)[^{}]*?\b(?:nom|name|slug|label)\b["'\s:]+["']([^"']{2,30})["'][^{}]*?\}/gi;
+          let m; while ((m = re.exec(js)) && hits.length < 120) hits.push({ id: +m[1], name: m[2] });
+          // motif inverse nom puis id
+          const re2 = /\{[^{}]*?\b(?:nom|name|slug|label)\b["'\s:]+["']([^"']{2,30})["'][^{}]*?\b(?:id|bookId|bookmakerId)\b["'\s:]+(\d+)[^{}]*?\}/gi;
+          while ((m = re2.exec(js)) && hits.length < 240) hits.push({ id: +m[2], name: m[1] });
+          if (hits.length) found[u] = hits.filter((h) => KNOWN.includes(String(h.name).toLowerCase())).slice(0, 40);
+        } catch (_) {}
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, scripts: abs.length, hits: hits.slice(0, 60), knownMatches: found });
+    }
+
     if (type === 'probe') {
       const rid = String(req.query.id || '').replace(/\D/g, '') || '1596595';
       const tok = generateToken();

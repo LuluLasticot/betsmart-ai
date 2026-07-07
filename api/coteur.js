@@ -68,13 +68,10 @@ module.exports = async (req, res) => {
     if (type === 'pagescore') {
       const slug = String(req.query.slug || 'argentine-egypte-1596595').replace(/[^a-z0-9-]/gi, '');
       const html = await (await fetch(`${COTEUR}/cote/${slug}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR,fr;q=0.9', 'Accept': 'text/html' } })).text();
-      const around = [];
-      for (const kw of ['direct', 'mi-temps', 'score', 'live', 'EN DIRECT', 'renc-', 'match-status']) {
-        let p = html.toLowerCase().indexOf(kw.toLowerCase());
-        if (p >= 0) around.push(html.slice(Math.max(0, p - 80), p + 160).replace(/\s+/g, ' '));
-      }
+      const p = html.indexOf('EN DIRECT');
+      const block = p >= 0 ? html.slice(Math.max(0, p - 900), p + 120).replace(/\s+/g, ' ') : '';
       res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, len: html.length, around });
+      return res.status(200).json({ ok: true, len: html.length, block });
     }
 
     if (type === 'livesocket') {

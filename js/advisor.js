@@ -257,6 +257,55 @@ ${JSON.stringify(candidates, null, 2)}
 Pour un pick 1N2, "cote" DOIT être exactement la cote fournie (cote_1/cote_N/cote_2). "match" DOIT reprendre le libellé exact fourni.`;
   }
 
+  /* ------------------------------------------------------------------
+     Radar tous-marchés : Gemini choisit parmi TOUS les marchés coteur
+     réellement proposés (chaque option a un id + sa cote réelle).
+     ------------------------------------------------------------------ */
+  function marketsPrompt(ctx, candidates) {
+    return `# RÔLE
+
+Tu es un analyste quantitatif senior en value betting. Ta force : estimer des probabilités réelles calibrées. Les cotes te sont fournies (réelles, coteur.com) — tu ne les inventes pas. Tu analyses TOUS les marchés, pas seulement le 1N2.
+${ctx.feedback}
+
+# MATCHS ET MARCHÉS RÉELS (cotes réelles, meilleur book FR)
+Chaque option a un "id". Tu dois choisir des options par leur id.
+${JSON.stringify(candidates, null, 2)}
+
+# TRAVAIL (via Google Search)
+Pour chaque match : enquête < 48 h (blessures, compos, forme, enjeu, calendrier, H2H, météo/surface, style de jeu, moyennes de buts). Puis, sur l'ENSEMBLE des marchés proposés (résultat, double chance, DNB, over/under buts pleine ET mi-temps, mi-temps 1N2, mi-temps/fin, handicaps…), estime la probabilité réelle de chaque option pertinente et calcule value = probabilite × cote − 1 sur la cote fournie.
+
+# SÉLECTION
+- Retiens les MEILLEURES value (value ≥ 5 %), tous marchés confondus — ne te limite jamais au 1N2. Si un over/under, un handicap ou un mi-temps/fin offre plus de value que le 1N2, choisis-le.
+- Cotes entre 1,40 et 5,00. Confiance 1-5 (< 3 = écarter). Maximum 5 picks, un seul par match, classés par (value × confiance).
+- Abstention possible : "picks": [] si rien ne dépasse le seuil.
+
+# CONTEXTE UTILISATEUR
+Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ctx.userPerf}
+
+# SORTIE — termine par un unique bloc \`\`\`json :
+\`\`\`json
+{
+  "analyse_marche": "2-3 phrases.",
+  "picks": [
+    {"option_id":"OU2-5_3","probabilite":0.58,"confiance":4,"analyse":"3-5 phrases factuelles issues de ta recherche.","risques":"1-2 phrases.","sources":["site — vérifié"]}
+  ]
+}
+\`\`\`
+"option_id" DOIT être l'un des id fournis. N'invente aucune option ni cote.`;
+  }
+
+  async function suggestFromCoteurMarkets(apiKey, model, ctx, candidates, onProgress) {
+    if (!candidates.length) {
+      return { analyse_marche: 'Aucun match coteur exploitable dans la fenêtre — élargissez la fenêtre ou les sports.', picks: [], raw: true };
+    }
+    onProgress?.('research', candidates);
+    const raw = await callGemini(apiKey, ctx.deepModel || model, marketsPrompt(ctx, candidates), { temperature: 0.25 });
+    const parsed = extractJSON(raw);
+    if (!parsed || !Array.isArray(parsed.picks)) throw new Error('Réponse du modèle illisible — réessayez.');
+    onProgress?.('done');
+    return parsed; // picks = [{option_id, probabilite, confiance, analyse, risques, sources}]
+  }
+
   async function suggestFromCoteur(apiKey, model, ctx, candidates, onProgress) {
     if (!candidates.length) {
       return { analyse_marche: 'Aucun match coteur exploitable dans la fenêtre — élargissez la fenêtre ou les sports.', picks: [], candidats: [] };
@@ -384,5 +433,5 @@ Pour un pick 1N2, "cote" DOIT être exactement la cote fournie (cote_1/cote_N/co
     };
   }
 
-  return { suggest, suggestFromCoteur, analyzeMatch, stakeFor, radarStats, feedbackBlock, PROFILES };
+  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, stakeFor, radarStats, feedbackBlock, PROFILES };
 })();

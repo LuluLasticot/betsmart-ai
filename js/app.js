@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v18';
+  const APP_VERSION = 'v19';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1225,35 +1225,81 @@
     };
   }
 
-  /** Rassemble les matchs et cotes réels de coteur pour les sports/fenêtre choisis. */
-  async function gatherCoteurCandidates(ctx) {
+  /** Rassemble TOUS les marchés réels de coteur pour les matchs de la fenêtre. */
+  async function gatherCoteurMarkets(ctx) {
     const sports = ctx.sports.split(',').map((s) => s.trim()).filter(Boolean);
     const books = state.settings.onlyMyBooks !== false ? userBookNames() : null;
+    const allowed = books && books.length ? new Set(books.map((b) => b.toLowerCase().replace(/\s+/g, ' ').trim())) : null;
     const horizonMs = Number(ctx.horizon) * 3600e3;
     const now = Date.now();
     const excluded = new Set(state.bets.filter((b) => b.status === 'pending').map((b) => (b.event || '').toLowerCase().replace(/\s+/g, ' ').trim()));
 
-    const perSport = Math.max(4, Math.floor(14 / sports.length));
-    const out = [];
+    // 1) Liste des matchs (sans cotes) pour chaque sport, filtrée par fenêtre
+    const perSport = Math.max(3, Math.floor(9 / sports.length));
+    const matchList = [];
     for (const sport of sports) {
       let events = [];
-      try { events = await Coteur.getUpcomingEvents(sport, { limit: perSport, books }); } catch (_) { continue; }
-      for (const e of events) {
-        if (!e.odds || (!e.odds.home && !e.odds.away)) continue;               // besoin d'au moins une cote
-        if (e.date.getTime() > now + horizonMs) continue;                       // dans la fenêtre
-        const label = `${e.teamA} – ${e.teamB}`;
-        if (excluded.has(label.toLowerCase())) continue;                        // déjà parié
-        out.push({
-          sport, competition: e.league, match: label,
-          date: e.date.toISOString().slice(0, 10),
-          heure: e.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-          cote_1: e.odds.home?.price ?? null,
-          cote_N: e.odds.draw?.price ?? null,
-          cote_2: e.odds.away?.price ?? null
-        });
-      }
+      try { events = await Coteur.getUpcomingEvents(sport, { limit: 30, withOdds: false }); } catch (_) { continue; }
+      const picked = events
+        .filter((e) => e.rencId && e.date.getTime() <= now + horizonMs && e.date.getTime() > now - 2 * 3600e3)
+        .filter((e) => !excluded.has(`${e.teamA} – ${e.teamB}`.toLowerCase()))
+        .sort((a, b) => a.date - b.date)
+        .slice(0, perSport);
+      picked.forEach((e) => matchList.push({ ...e, sport }));
     }
-    return out.sort((a, b) => (a.date < b.date ? -1 : 1)).slice(0, 15);
+    if (!matchList.length) return { candidates: [], index: {} };
+
+    // 2) Pour chaque match, tous les marchés + cotes réelles
+    const candidates = [];
+    const index = {}; // option_id -> détail complet du pick
+    for (const m of matchList.slice(0, 10)) {
+      let mk = null;
+      try { mk = await Coteur.getMatchMarkets(m.rencId, { allowed }); } catch (_) { continue; }
+      if (!mk || !mk.markets.length) continue;
+      const label = `${mk.home} – ${mk.away}`;
+      const marches = mk.markets.map((mrk) => ({
+        marche: mrk.label,
+        options: mrk.options.map((o) => {
+          index[o.id] = {
+            sport: m.sport, competition: m.league, match: label,
+            date_match: m.date.toISOString().slice(0, 10),
+            heure_match: m.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+            marche: mrk.label, selection: o.selection, cote: o.cote, bookmaker: o.book, mine: o.mine
+          };
+          return { id: o.id, selection: o.selection, cote: o.cote };
+        })
+      }));
+      candidates.push({ match: label, sport: m.sport, competition: m.league, date: m.date.toISOString().slice(0, 10), marches });
+    }
+    return { candidates, index };
+  }
+
+  /** Reconstruit des picks complets à partir des option_id choisis par Gemini. */
+  function mapCoteurMarketPicks(rawResult, index) {
+    const picks = (rawResult.picks || [])
+      .map((p) => {
+        const info = index[p.option_id];
+        if (!info) return null;
+        const prob = Number(p.probabilite);
+        if (!(prob > 0 && prob < 1)) return null;
+        const value = prob * info.cote - 1;
+        return {
+          sport: info.sport, competition: info.competition, match: info.match,
+          date_match: info.date_match, heure_match: info.heure_match,
+          marche: info.marche, selection: info.selection,
+          cote: info.cote, cote_verifiee: true, bookmaker: info.bookmaker,
+          probabilite: prob, value_pct: Math.round(value * 1000) / 10,
+          confiance: p.confiance || 3, analyse: p.analyse || '', risques: p.risques || '',
+          sources: p.sources || [],
+          live: info.mine === false
+            ? { status: 'not_my_book', best: { book: info.bookmaker, price: info.cote } }
+            : { prices: [{ book: info.bookmaker, price: info.cote }] }
+        };
+      })
+      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && (p.probabilite * p.cote - 1) >= 0.05 && p.confiance >= 3)
+      .sort((a, b) => (b.value_pct * b.confiance) - (a.value_pct * a.confiance))
+      .slice(0, 5);
+    return { analyse_marche: rawResult.analyse_marche || '', picks, coteurMarkets: true };
   }
 
   function renderRadarProgress(step) {
@@ -1285,11 +1331,12 @@
 
     try {
       let result;
-      // Source coteur : on part des vrais matchs + cotes coteur, Gemini analyse.
+      // Source coteur : tous les marchés réels de coteur → Gemini analyse et choisit.
       if (state.settings.oddsSource === 'coteur') {
-        const candidates = await gatherCoteurCandidates(ctx);
+        const { candidates, index } = await gatherCoteurMarkets(ctx);
         if (candidates.length) {
-          result = await Advisor.suggestFromCoteur(state.settings.apiKey, state.settings.model, ctx, candidates, (step) => renderRadarProgress(step));
+          const rawResult = await Advisor.suggestFromCoteurMarkets(state.settings.apiKey, state.settings.model, ctx, candidates, (step) => renderRadarProgress(step));
+          result = mapCoteurMarketPicks(rawResult, index);
         }
       }
       // Repli : inventaire Gemini classique (autres sources, ou coteur indisponible)
@@ -1310,7 +1357,10 @@
       await DB.setSetting('lastRadar', { result, profileKey: $('#advProfile').value, bankroll: ctx.bankroll, at });
       renderAdvisorResult(result, $('#advProfile').value, ctx.bankroll, at);
       renderRadarPerf();
-      verifyLiveOdds(result, $('#advProfile').value, ctx.bankroll, at); // en arrière-plan
+      // Les picks « tous marchés » portent déjà la cote coteur réelle → pas de re-vérification.
+      if (!result.coteurMarkets) {
+        verifyLiveOdds(result, $('#advProfile').value, ctx.bankroll, at); // en arrière-plan
+      }
     } catch (err) {
       container.innerHTML = `<div class="empty-state"><p>Radar indisponible : ${escapeHTML(err.message)}</p><p class="empty-hint">La recherche Google (grounding) nécessite une clé API dont le quota le permet. Réessayez dans une minute.</p></div>`;
     } finally {

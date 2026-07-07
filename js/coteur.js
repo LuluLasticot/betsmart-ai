@@ -333,6 +333,72 @@ const Coteur = (() => {
     return results;
   }
 
+  /* ------------------------------------------------------------------
+     Extraction de TOUS les marchés d'un match (avec vraies cotes FR)
+     pour alimenter le Radar. Chaque option porte un id unique.
+     ------------------------------------------------------------------ */
+  const capTeam = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s);
+  const thrLabel = (special) => String(special).replace('-', '.');
+
+  async function getMatchMarkets(rencId, { allowed = null } = {}) {
+    const raw = await getFullOdds(rencId);
+    if (!raw) return null;
+    const H = capTeam(raw.info?.teamDom?.equipeNom || 'Domicile');
+    const A = capTeam(raw.info?.teamExt?.equipeNom || 'Extérieur');
+
+    const opt = (arr, id, selection, o) => {
+      if (!o || !(Number(o.cote) > 1)) return;
+      const name = bookName(o.bookId);
+      arr.push({ id, selection, cote: Number(o.cote), book: name, mine: !allowed || allowed.has(norm(name)) });
+    };
+    const markets = [];
+    const add = (label, opts) => { if (opts.length) markets.push({ label, options: opts }); };
+
+    for (const e of raw.odds) {
+      const b = e.bestfr || e.best;
+      if (!b) continue;
+      const o = [];
+      const s = e.special || '';
+
+      if (e.typename === '1n2' && !s) {
+        opt(o, '1n2_1', `Victoire ${H}`, b['1']); opt(o, '1n2_0', 'Match nul', b['0']); opt(o, '1n2_2', `Victoire ${A}`, b['2']);
+        add('Résultat (1N2)', o);
+      } else if (e.typename === 'DC') {
+        opt(o, 'DC_1', `${H} ou Nul (double chance)`, b['1']); opt(o, 'DC_2', `Nul ou ${A} (double chance)`, b['2']); opt(o, 'DC_3', `${H} ou ${A} (double chance)`, b['3']);
+        add('Double chance', o);
+      } else if (e.typename === 'DNB') {
+        opt(o, 'DNB_1', `${H} (remboursé si nul)`, b['1']); opt(o, 'DNB_2', `${A} (remboursé si nul)`, b['2']);
+        add('Draw No Bet', o);
+      } else if (e.typename === 'OU') {
+        const t = thrLabel(s);
+        opt(o, `OU${s}_3`, `Plus de ${t} buts`, b['3']); opt(o, `OU${s}_2`, `Moins de ${t} buts`, b['2']);
+        add(`Total buts ${t}`, o);
+      } else if (e.typename === 'HTOU') {
+        const t = thrLabel(s);
+        opt(o, `HTOU${s}_3`, `Plus de ${t} buts (1re MT)`, b['3']); opt(o, `HTOU${s}_2`, `Moins de ${t} buts (1re MT)`, b['2']);
+        add(`Total buts 1re MT ${t}`, o);
+      } else if (e.typename === 'HT') {
+        opt(o, 'HT_1', `${H} à la mi-temps`, b['1']); opt(o, 'HT_2', 'Nul à la mi-temps', b['2']); opt(o, 'HT_3', `${A} à la mi-temps`, b['3']);
+        add('Résultat 1re mi-temps (1N2)', o);
+      } else if (e.typename === 'HT2') {
+        opt(o, 'HT2_1', `${H} 2e mi-temps`, b['1']); opt(o, 'HT2_2', 'Nul 2e mi-temps', b['2']); opt(o, 'HT2_3', `${A} 2e mi-temps`, b['3']);
+        add('Résultat 2e mi-temps (1N2)', o);
+      } else if (e.typename === 'HTFT') {
+        const c = { 1: `${H}/${H}`, 2: `${H}/Nul`, 3: `${H}/${A}`, 4: `Nul/${H}`, 5: 'Nul/Nul', 6: `Nul/${A}`, 7: `${A}/${H}`, 8: `${A}/Nul`, 9: `${A}/${A}` };
+        for (const k of Object.keys(c)) opt(o, `HTFT_${k}`, `Mi-temps/Fin : ${c[k]}`, b[k]);
+        add('Mi-temps / Fin de match', o);
+      } else if (e.typename === '1n2' && s) {
+        opt(o, `H1n2${s}_1`, `${H} handicap ${s}`, b['1']); opt(o, `H1n2${s}_0`, `Nul handicap ${s}`, b['0']); opt(o, `H1n2${s}_2`, `${A} handicap ${s}`, b['2']);
+        add(`Handicap ${s}`, o);
+      } else if (e.typename === '12' && s) {
+        opt(o, `H12${s}_1`, `${H} handicap asiatique ${s}`, b['1']); opt(o, `H12${s}_2`, `${A} handicap asiatique ${s}`, b['2']);
+        add(`Handicap asiatique ${s}`, o);
+      }
+      if (markets.length >= 16) break;
+    }
+    return { home: H, away: A, markets };
+  }
+
   /** Retrouve le match coteur correspondant à un pari (renvoie {rencId, slug, teams, date}). */
   async function findMatch(pick) {
     const page = SPORT_PAGES[norm(pick.sport).split(' ')[0]];
@@ -369,7 +435,7 @@ const Coteur = (() => {
   }
 
   return {
-    verifyPick, getUpcomingEvents, findMatch, liveScore, test, generateToken,
+    verifyPick, getUpcomingEvents, getMatchMarkets, findMatch, liveScore, test, generateToken,
     // exposés pour tests
     _parseMatchList: parseMatchList, _bestForOutcome: bestForOutcome,
     _resolveOutcome: resolveOutcome, _betEntry: betEntry

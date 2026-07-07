@@ -16,8 +16,11 @@
     period: 'all',
     view: 'dashboard',
     charts: {},
-    scanQueue: []
+    scanQueue: [],
+    betsPage: 1
   };
+
+  const APP_VERSION = 'v18';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -48,6 +51,9 @@
     bindPaste();
     bindLive();
     maybeOnboard();
+
+    const vb = document.getElementById('versionBadge');
+    if (vb) vb.textContent = APP_VERSION;
 
     renderAll();
     renderTxList();
@@ -507,8 +513,8 @@
 
   function bindFilters() {
     FILTER_IDS.forEach((id) =>
-      $(`#${id}`).addEventListener('change', () => { persistFilters(); renderBets(); }));
-    $('#filterSearch').addEventListener('input', debounce(renderBets, 180));
+      $(`#${id}`).addEventListener('change', () => { state.betsPage = 1; persistFilters(); renderBets(); }));
+    $('#filterSearch').addEventListener('input', debounce(() => { state.betsPage = 1; renderBets(); }, 180));
   }
 
   function persistFilters() {
@@ -559,22 +565,53 @@
     );
   }
 
+  const BETS_PER_PAGE = 20;
+
   function renderBets() {
     refreshFilterOptions();
     const bets = filteredBets();
     const k = Stats.kpis(bets, 0);
     $('#betsCount').textContent = `${bets.length} paris · ${Stats.fmtSigned(k.profit)} de profit sur la sélection`;
 
+    const pages = Math.max(1, Math.ceil(bets.length / BETS_PER_PAGE));
+    if (state.betsPage > pages) state.betsPage = pages;
+    if (state.betsPage < 1) state.betsPage = 1;
+    const start = (state.betsPage - 1) * BETS_PER_PAGE;
+    const pageBets = bets.slice(start, start + BETS_PER_PAGE);
+
     $('#betsList').innerHTML = bets.length
       ? `<div class="col-headers"><span>Pari</span><span class="r hide-m">Date</span><span class="r hide-m">Cote</span><span class="r hide-m">Mise</span><span class="r">P/L</span><span></span></div>`
-        + bets.map(betRowHTML).join('')
+        + pageBets.map(betRowHTML).join('')
+        + paginationHTML(bets.length, pages, start, pageBets.length)
       : '<div class="empty-state"><p>Aucun pari ne correspond à ces filtres.</p></div>';
     bindBetRowActions($('#betsList'));
+    bindPagination(pages);
 
     // Bouton de vérification IA des résultats
     const overdue = pendingOverdue();
     $('#checkResults').hidden = overdue.length === 0;
     $('#checkResultsLabel').textContent = `Vérifier les résultats (${overdue.length})`;
+  }
+
+  function paginationHTML(total, pages, start, count) {
+    if (pages <= 1) return '';
+    return `<div class="pagination">
+      <button class="btn-icon" data-page="prev" ${state.betsPage <= 1 ? 'disabled' : ''} aria-label="Page précédente"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="pagination-info">${start + 1}–${start + count} sur ${total}</span>
+      <button class="btn-icon" data-page="next" ${state.betsPage >= pages ? 'disabled' : ''} aria-label="Page suivante"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+    </div>`;
+  }
+
+  function bindPagination(pages) {
+    const prev = $('#betsList [data-page="prev"]');
+    const next = $('#betsList [data-page="next"]');
+    if (prev) prev.addEventListener('click', () => { if (state.betsPage > 1) { state.betsPage--; renderBets(); scrollBetsTop(); } });
+    if (next) next.addEventListener('click', () => { if (state.betsPage < pages) { state.betsPage++; renderBets(); scrollBetsTop(); } });
+  }
+
+  function scrollBetsTop() {
+    const el = document.getElementById('view-bets');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   /** Paris en attente dont la date est aujourd'hui ou passée. */

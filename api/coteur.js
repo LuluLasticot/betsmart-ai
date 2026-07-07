@@ -65,6 +65,32 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'probe') {
+      const rid = String(req.query.id || '').replace(/\D/g, '') || '1596595';
+      const tok = generateToken();
+      const H = { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/`, 'Origin': COTEUR };
+      const candidates = [
+        `https://oddsv2.coteur.com/odds/getOdds/${rid}`,
+        `https://oddsv2.coteur.com/odds/getAllOdds/${rid}`,
+        `https://oddsv2.coteur.com/odds/getBookmakerOdds/${rid}`,
+        `https://oddsv2.coteur.com/odds/detail/${rid}`,
+        `https://oddsv2.coteur.com/odds/getFullOdds/${rid}?all=1`,
+        `https://oddsv2.coteur.com/bookmaker`,
+        `https://oddsv2.coteur.com/bookmaker/getAll`,
+        `https://oddsv2.coteur.com/bookmakers/fr`
+      ];
+      const out = {};
+      for (const u of candidates) {
+        try {
+          const r = await fetch(u, { headers: H });
+          const txt = await r.text();
+          out[u] = { status: r.status, sample: txt.slice(0, 500) };
+        } catch (e) { out[u] = { error: String(e && e.message) }; }
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, out });
+    }
+
     if (type === 'odds') {
       if (!/^\d+$/.test(String(id))) return res.status(400).json({ ok: false, error: 'id invalide' });
       const token = generateToken();

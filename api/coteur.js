@@ -65,113 +65,27 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
-    if (type === 'pagescore') {
-      const slug = String(req.query.slug || 'argentine-egypte-1596595').replace(/[^a-z0-9-]/gi, '');
-      const html = await (await fetch(`${COTEUR}/cote/${slug}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR,fr;q=0.9', 'Accept': 'text/html' } })).text();
-      const p = html.indexOf('EN DIRECT');
-      const block = p >= 0 ? html.slice(Math.max(0, p - 900), p + 120).replace(/\s+/g, ' ') : '';
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, len: html.length, block });
-    }
-
-    if (type === 'livesocket') {
-      const ids = String(req.query.ids || '1596595').split(',').map((s) => s.replace(/\D/g, '')).filter(Boolean);
-      let io; try { io = require('socket.io-client'); } catch (e) { return res.status(200).json({ ok: false, error: 'socket.io-client absent: ' + e.message }); }
-      const host = String(req.query.host || 'node-dev');
-      const url = host === 'oddsv2' ? 'https://oddsv2.coteur.com' : 'https://node-dev.coteur.com';
-      const socket = io(url, {
-        path: '/live/socket.io', reconnection: false, timeout: 6000, forceNew: true,
-        extraHeaders: { 'Origin': COTEUR, 'User-Agent': UA, 'Referer': `${COTEUR}/` }
+    if (type === 'score') {
+      // Score + statut en direct depuis la page match (rendus côté serveur)
+      const slug = String(req.query.slug || '').replace(/[^a-z0-9-]/gi, '');
+      if (!slug) return res.status(400).json({ ok: false, error: 'slug requis' });
+      const r = await fetch(`${COTEUR}/cote/${slug}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR,fr;q=0.9', 'Accept': 'text/html' } });
+      const html = await r.text();
+      // <span class="display-4 fw-bold text-primary"> 0 - 1 </span>
+      const sm = html.match(/display-4[^>]*text-primary[^>]*>\s*(\d+)\s*[-–]\s*(\d+)\s*</i);
+      // badge de statut : "EN DIRECT • Mi-temps", "Terminé", etc.
+      const badge = html.match(/badge\s+bg-(?:danger|success|secondary|warning)[^>]*>\s*([^<]+?)\s*</i);
+      const statusTxt = badge ? badge[1].replace(/\s+/g, ' ').trim() : null;
+      const live = /direct/i.test(statusTxt || '');
+      const finished = /termin/i.test(statusTxt || '');
+      res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
+      return res.status(200).json({
+        ok: true,
+        score_dom: sm ? +sm[1] : null,
+        score_ext: sm ? +sm[2] : null,
+        status: statusTxt,
+        live, finished
       });
-      const events = [];
-      let connected = false, connErr = null;
-      await new Promise((resolve) => {
-        const done = () => { try { socket.close(); } catch (_) {} resolve(); };
-        const t = setTimeout(done, 7500);
-        socket.on('connect', () => { connected = true; socket.emit('subscribe', ids); });
-        socket.on('live', (e) => { events.push(e); });
-        socket.on('connect_error', (err) => { connErr = String(err && (err.message || err.type || err)); });
-        socket.on('error', (err) => { connErr = connErr || String(err); });
-      });
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, url, connected, connErr, count: events.length, events: events.slice(0, 8) });
-    }
-
-    if (type === 'livecfg') {
-      const pages = ['', 'cotes-foot', 'direct', 'live', 'football/direct', 'resultat-en-direct'];
-      const out = {};
-      for (const p of pages) {
-        try {
-          const html = await (await fetch(`${COTEUR}/${p}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR' } })).text();
-          const attrs = [...html.matchAll(/data-[a-z-]*(?:api-url|socket-url|url)-value="([^"]+)"/gi)].map((m) => m[0].slice(0, 160));
-          const ctrl = [...html.matchAll(/data-controller="[^"]*(?:live|score|direct)[^"]*"/gi)].map((m) => m[0]);
-          const node = (html.match(/https?:\/\/node[^"']+/g) || []).slice(0, 4);
-          if (attrs.length || ctrl.length || node.length) out[p || 'home'] = { attrs, ctrl, node };
-        } catch (e) { out[p] = String(e && e.message); }
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, out });
-    }
-
-    if (type === 'js') {
-      // Récupère les bundles JS et extrait la config socket.io (events, namespace, emit)
-      const page = await (await fetch(`${COTEUR}/cote/argentine-egypte-1596595`, { headers: { 'User-Agent': UA } })).text();
-      let srcs = [...page.matchAll(/src="([^"]+\.js[^"]*)"/gi)].map((m) => m[1]);
-      // base des chunks webpack (souvent défini dans le runtime)
-      const base = (page.match(/https?:\/\/[^"']+\/build\//) || [])[0]
-        || (srcs.find((s) => /\/build\//.test(s)) || '').replace(/[^/]+\.js.*$/, '')
-        || `${COTEUR}/build/`;
-      // ajoute des chunks vus dans le réseau
-      for (const chunk of ['993.6c477337.js', '806.f3649cd3.js']) srcs.push(base + chunk);
-      srcs = [...new Set(srcs.map((s) => (s.startsWith('http') ? s : `${COTEUR}${s.startsWith('/') ? '' : '/'}${s}`)))];
-
-      const snippets = {};
-      for (const u of srcs.slice(0, 12)) {
-        try {
-          const js = await (await fetch(u, { headers: { 'User-Agent': UA } })).text();
-          if (!/socket|\.emit\(|\.on\(|score/i.test(js)) continue;
-          const found = [];
-          const re = /(?:subscribeToMatches",value:function.{0,220}|renc_id.{0,360}|fetchInitialData",value:.{0,320})/gi;
-          let m; while ((m = re.exec(js)) && found.length < 20) found.push(m[0].replace(/\s+/g, ' '));
-          if (found.length) snippets[u.split('/').pop()] = found;
-        } catch (e) { snippets[u] = String(e && e.message); }
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, base, scripts: srcs, snippets });
-    }
-
-    if (type === 'info') {
-      const rid = String(req.query.id || '').replace(/\D/g, '') || '1596595';
-      const tok = generateToken();
-      // 1) getFullOdds → info (peut contenir le score en live)
-      const r1 = await fetch(`${ODDS_API}/${rid}`, { headers: { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/`, 'Origin': COTEUR } });
-      const t1 = await r1.text();
-      let full = null; try { full = JSON.parse(t1); } catch (_) {}
-      // repère toutes les clés contenant score/live/minute/period dans tout le payload
-      const hits = [];
-      const scan = (o, path) => {
-        if (!o || typeof o !== 'object' || hits.length > 40) return;
-        for (const k of Object.keys(o)) {
-          if (/score|live|minute|periode|period|status|etat|temps|half|mt/i.test(k)) hits.push(`${path}.${k} = ${JSON.stringify(o[k]).slice(0, 80)}`);
-          if (o[k] && typeof o[k] === 'object') scan(o[k], `${path}.${k}`);
-        }
-      };
-      if (full) scan(full, '');
-      // 2) endpoints live candidats spécifiques au match
-      const liveCands = [
-        `https://oddsv2.coteur.com/live/${rid}`,
-        `https://oddsv2.coteur.com/score/${rid}`,
-        `https://oddsv2.coteur.com/odds/getScore/${rid}`,
-        `https://oddsv2.coteur.com/rencontre/${rid}`,
-        `https://oddsv2.coteur.com/match/${rid}`
-      ];
-      const live = {};
-      for (const u of liveCands) {
-        try { const r = await fetch(u, { headers: { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/` } }); live[u] = { status: r.status, sample: (await r.text()).slice(0, 200) }; }
-        catch (e) { live[u] = { error: String(e && e.message) }; }
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, info: full?.info || null, scoreKeys: hits, liveEndpoints: live });
     }
 
     if (type === 'odds') {

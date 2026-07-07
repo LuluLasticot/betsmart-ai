@@ -1799,19 +1799,34 @@
     $('#liveBoxMobile').hidden = !show;
     if (!show) return;
 
-    if (!state.settings.apiKey) {
-      const msg = '<p class="live-empty">Clé Gemini requise (Réglages) pour les scores live.</p>';
-      $('#liveBoxList').innerHTML = msg;
-      $('#liveBoxListMobile').innerHTML = msg;
-      return;
-    }
-
     if (manual) $('#liveRefresh').classList.add('spinning');
     try {
-      const scores = await Live.fetchScores(state.settings.apiKey, state.settings.model, matches);
-      renderLive(scores, matches);
+      // 1) Scores réels via coteur (rapide, gratuit) pour les matchs qu'on retrouve
+      const coteurScores = [];
+      const unmatched = [];
+      await Promise.all(matches.map(async (m) => {
+        try {
+          const cm = await Coteur.findMatch(m);
+          if (cm && cm.slug) {
+            const s = await Coteur.liveScore(cm.slug);
+            if (s && (s.score_dom !== null || s.status)) {
+              coteurScores.push({ id: m.id, score_dom: s.score_dom, score_ext: s.score_ext, status: s.status, live: s.live, finished: s.finished, source: 'coteur' });
+              return;
+            }
+          }
+        } catch (_) {}
+        unmatched.push(m);
+      }));
+
+      // 2) Repli Gemini pour les matchs non trouvés sur coteur
+      let geminiScores = [];
+      if (unmatched.length && state.settings.apiKey) {
+        try { geminiScores = await Live.fetchScores(state.settings.apiKey, state.settings.model, unmatched); } catch (_) {}
+      }
+
+      renderLive(coteurScores, geminiScores, matches);
     } catch (err) {
-      const msg = `<p class="live-empty">Live indisponible${err.message.includes('Quota') ? ' (quota)' : ''}.</p>`;
+      const msg = '<p class="live-empty">Live indisponible.</p>';
       $('#liveBoxList').innerHTML = msg;
       $('#liveBoxListMobile').innerHTML = msg;
     } finally {
@@ -1819,25 +1834,44 @@
     }
   }
 
-  function renderLive(scores, matches) {
-    const byId = new Map(scores.map((s) => [String(s.id), s]));
+  function renderLive(coteurScores, geminiScores, matches) {
+    const cById = new Map(coteurScores.map((s) => [String(s.id), s]));
+    const gById = new Map(geminiScores.map((s) => [String(s.id), s]));
+
     const rows = matches.map((m) => {
-      const s = byId.get(String(m.id));
-      const shortTeams = escapeHTML((m.event || '').replace(/\s*[–—-]\s*/g, ' – '));
+      const teams = escapeHTML((m.event || '').replace(/\s*[–—-]\s*/g, ' – '));
+      const c = cById.get(String(m.id));
+
+      if (c) {
+        // Source coteur : score_dom/ext + status texte ("EN DIRECT • Mi-temps", "Terminé"…)
+        if (c.score_dom === null && !c.live && !c.finished) {
+          return liveRow(teams, null, 'à venir', 'done');
+        }
+        const score = `${c.score_dom ?? 0}–${c.score_ext ?? 0}`;
+        const st = (c.status || '').replace(/EN DIRECT\s*[•·]?\s*/i, '').trim();
+        const min = c.finished ? 'Fin' : (st || 'live');
+        const cls = c.finished ? 'done' : /mi-?temps/i.test(st) ? 'ht' : '';
+        return liveRow(teams, score, min, cls);
+      }
+
+      // Source Gemini (repli)
+      const s = gById.get(String(m.id));
       if (!s || s.etat === 'inconnu' || s.etat === 'a_venir') {
-        const label = s?.minute || 'à venir';
-        return `<div class="live-row"><span class="live-teams">${shortTeams}</span><span class="live-min done">${escapeHTML(label)}</span></div>`;
+        return liveRow(teams, null, s?.minute || 'à venir', 'done');
       }
       const score = `${s.score_dom ?? 0}–${s.score_ext ?? 0}`;
-      const minCls = s.etat === 'mi_temps' ? 'ht' : s.etat === 'termine' ? 'done' : '';
+      const cls = s.etat === 'mi_temps' ? 'ht' : s.etat === 'termine' ? 'done' : '';
       const min = s.etat === 'termine' ? 'Fin' : s.etat === 'mi_temps' ? 'MT' : (s.minute || '');
-      return `<div class="live-row"><span class="live-teams">${shortTeams}</span><span class="live-score">${escapeHTML(score)}</span><span class="live-min ${minCls}">${escapeHTML(min)}</span></div>`;
+      return liveRow(teams, score, min, cls);
     });
 
-    // Trie : en cours d'abord
     const html = rows.join('') || '<p class="live-empty">Aucun match en cours.</p>';
     $('#liveBoxList').innerHTML = html;
     $('#liveBoxListMobile').innerHTML = html;
+  }
+
+  function liveRow(teams, score, min, cls) {
+    return `<div class="live-row"><span class="live-teams">${teams}</span>${score ? `<span class="live-score">${escapeHTML(score)}</span>` : ''}<span class="live-min ${cls}">${escapeHTML(min)}</span></div>`;
   }
 
   /* ========================================================================

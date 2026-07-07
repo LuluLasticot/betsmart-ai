@@ -135,7 +135,8 @@ const Coteur = (() => {
         if (!teamA || !teamB) return;
         const before = full.slice(0, full.indexOf(dm[1])).trim();
         const league = before.replace(/\s*TRJ\s*:?\s*[\d.,]+\s*%/gi, '').replace(/[-–]/g, ' ').trim() || 'Coteur';
-        out.push({ rencId, teamA, teamB, league, date: parseCoteurDate(dm[1]) });
+        const slug = (href.match(/\/cote\/([a-z0-9-]+)/i) || [])[1] || null;
+        out.push({ rencId, slug, teamA, teamB, league, date: parseCoteurDate(dm[1]) });
       } catch (_) { /* ignore */ }
     });
     return out;
@@ -331,6 +332,34 @@ const Coteur = (() => {
     return results;
   }
 
+  /** Retrouve le match coteur correspondant à un pari (renvoie {rencId, slug, teams, date}). */
+  async function findMatch(pick) {
+    const page = SPORT_PAGES[norm(pick.sport).split(' ')[0]];
+    if (!page) return null;
+    const matches = await getMatchList(page);
+    if (!matches.length) return null;
+
+    const parts = (pick.match || pick.event || '').split(/\s+[–—-]\s+|\s+vs\.?\s+/i);
+    const A = toks(parts[0] || ''), B = toks(parts[1] || '');
+    if (!A.length || !B.length) return null;
+
+    const dISO = pick.date_match || pick.date;
+    return matches.find((m) => {
+      if (dISO && Math.abs(m.date - new Date(dISO + 'T12:00:00')) > 36 * 864e5) return false;
+      return (teamMatch(A, m.teamA) && teamMatch(B, m.teamB)) || (teamMatch(A, m.teamB) && teamMatch(B, m.teamA));
+    }) || null;
+  }
+
+  /** Score + statut en direct d'un match via son slug (backend requis). */
+  async function liveScore(slug) {
+    if (!slug) return null;
+    try {
+      const r = await fetch(`/api/coteur?type=score&slug=${encodeURIComponent(slug)}`);
+      const j = await r.json();
+      return j.ok ? j : null;
+    } catch (_) { return null; }
+  }
+
   async function test() {
     const html = await proxyFetch(`${COTEUR}/${SPORT_PAGES.football}`);
     const matches = parseMatchList(html);
@@ -339,7 +368,7 @@ const Coteur = (() => {
   }
 
   return {
-    verifyPick, getUpcomingEvents, test, generateToken,
+    verifyPick, getUpcomingEvents, findMatch, liveScore, test, generateToken,
     // exposés pour tests
     _parseMatchList: parseMatchList, _bestForOutcome: bestForOutcome,
     _resolveOutcome: resolveOutcome, _betEntry: betEntry

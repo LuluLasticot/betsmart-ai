@@ -65,6 +65,33 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'js') {
+      // Récupère les bundles JS et extrait la config socket.io (events, namespace, emit)
+      const page = await (await fetch(`${COTEUR}/cote/argentine-egypte-1596595`, { headers: { 'User-Agent': UA } })).text();
+      let srcs = [...page.matchAll(/src="([^"]+\.js[^"]*)"/gi)].map((m) => m[1]);
+      // base des chunks webpack (souvent défini dans le runtime)
+      const base = (page.match(/https?:\/\/[^"']+\/build\//) || [])[0]
+        || (srcs.find((s) => /\/build\//.test(s)) || '').replace(/[^/]+\.js.*$/, '')
+        || `${COTEUR}/build/`;
+      // ajoute des chunks vus dans le réseau
+      for (const chunk of ['993.6c477337.js', '806.f3649cd3.js']) srcs.push(base + chunk);
+      srcs = [...new Set(srcs.map((s) => (s.startsWith('http') ? s : `${COTEUR}${s.startsWith('/') ? '' : '/'}${s}`)))];
+
+      const snippets = {};
+      for (const u of srcs.slice(0, 12)) {
+        try {
+          const js = await (await fetch(u, { headers: { 'User-Agent': UA } })).text();
+          if (!/socket|\.emit\(|\.on\(|score/i.test(js)) continue;
+          const found = [];
+          const re = /.{40}(?:socket\.io|io\(|\.emit\(|\.on\(\s*["'][^"']+["']|getScore|["'][a-zA-Z_]*score[a-zA-Z_]*["']|subscribe|joinRoom|["']live["']|namespace|idbw).{40}/gi;
+          let m; while ((m = re.exec(js)) && found.length < 30) found.push(m[0].replace(/\s+/g, ' '));
+          if (found.length) snippets[u.split('/').pop()] = found;
+        } catch (e) { snippets[u] = String(e && e.message); }
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, base, scripts: srcs, snippets });
+    }
+
     if (type === 'info') {
       const rid = String(req.query.id || '').replace(/\D/g, '') || '1596595';
       const tok = generateToken();

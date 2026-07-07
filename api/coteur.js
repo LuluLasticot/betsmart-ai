@@ -65,6 +65,24 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'livehtml') {
+      const paths = ['resultat-match-en-direct', 'scores-en-direct', 'live', 'football/live'];
+      const out = {};
+      for (const p of paths) {
+        try {
+          const r = await fetch(`${COTEUR}/${p}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR', 'Accept': 'text/html' } });
+          const html = await r.text();
+          // indices de score/minute rendus côté serveur
+          const scores = (html.match(/\b\d+\s*[-–:]\s*\d+\b/g) || []).slice(0, 8);
+          const mins = (html.match(/\b\d{1,3}['′]\b/g) || []).slice(0, 8);
+          const links = (html.match(/\/cote\/[a-z0-9-]+/gi) || []).slice(0, 6);
+          out[p] = { status: r.status, len: html.length, scores, mins, links };
+        } catch (e) { out[p] = { error: String(e && e.message) }; }
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, out });
+    }
+
     if (type === 'liveprobe') {
       const tok = generateToken();
       const H = { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/`, 'Origin': COTEUR };

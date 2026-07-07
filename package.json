@@ -1,0 +1,9 @@
+{
+  "name": "betsmart-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Backend serverless pour BetSmart AI (proxy coteur + scores live)",
+  "dependencies": {
+    "socket.io-client": "^2.5.0"
+  }
+}

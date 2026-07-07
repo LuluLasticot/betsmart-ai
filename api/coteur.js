@@ -65,6 +65,28 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'liveprobe') {
+      const tok = generateToken();
+      const H = { 'token': tok, 'User-Agent': UA, 'Accept': 'application/json', 'Referer': `${COTEUR}/`, 'Origin': COTEUR };
+      const cands = [
+        'https://oddsv2.coteur.com/live',
+        'https://oddsv2.coteur.com/live/getLive',
+        'https://oddsv2.coteur.com/score/live',
+        'https://oddsv2.coteur.com/livescore',
+        'https://oddsv2.coteur.com/odds/getLive',
+        'https://oddsv2.coteur.com/live/football',
+        'https://api.coteur.com/live',
+        'https://www.coteur.com/live/scores.json'
+      ];
+      const out = {};
+      for (const u of cands) {
+        try { const r = await fetch(u, { headers: H }); out[u] = { status: r.status, sample: (await r.text()).slice(0, 300) }; }
+        catch (e) { out[u] = { error: String(e && e.message) }; }
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, out });
+    }
+
     if (type === 'odds') {
       if (!/^\d+$/.test(String(id))) return res.status(400).json({ ok: false, error: 'id invalide' });
       const token = generateToken();

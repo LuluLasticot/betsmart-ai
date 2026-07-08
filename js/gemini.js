@@ -111,6 +111,36 @@ Règles :
   }
 
   /* ------------------------------------------------------------------
+     Bilan de performance personnalisé
+     ------------------------------------------------------------------ */
+  const REVIEW_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      resume: { type: 'STRING' },
+      forces: { type: 'ARRAY', items: { type: 'OBJECT', properties: { titre: { type: 'STRING' }, detail: { type: 'STRING' } }, required: ['titre', 'detail'] } },
+      faiblesses: { type: 'ARRAY', items: { type: 'OBJECT', properties: { titre: { type: 'STRING' }, detail: { type: 'STRING' } }, required: ['titre', 'detail'] } },
+      recommandations: { type: 'ARRAY', items: { type: 'STRING' } }
+    },
+    required: ['resume', 'forces', 'faiblesses', 'recommandations']
+  };
+
+  function reviewPrompt(summary) {
+    return `Tu es un coach expert en gestion de bankroll de paris sportifs. Analyse en profondeur ce bilan statistique d'un parieur (montants en euros) :
+${JSON.stringify(summary, null, 2)}
+
+Produis un bilan personnalisé, chiffré et actionnable, en français :
+- "resume" : 2-3 phrases sur l'état de santé global du parieur (rentabilité, discipline, points saillants).
+- "forces" : 2-4 zones réellement rentables (sport, compétition, tranche de cote, type, tipster…), chacune avec des chiffres précis. Ignore les segments < 5 paris.
+- "faiblesses" : 2-4 zones qui détruisent la rentabilité, chiffrées (ROI négatif, combinés, tilt, mauvaise calibration…).
+- "recommandations" : 3-5 actions concrètes et priorisées (réallouer les mises, arrêter tel segment, stabiliser la mise…).
+Sois direct et exigeant mais bienveillant. Pas de généralités : chaque point s'appuie sur les données.`;
+  }
+
+  async function review(apiKey, model, summary) {
+    return call(apiKey, model, [{ text: reviewPrompt(summary) }], REVIEW_SCHEMA);
+  }
+
+  /* ------------------------------------------------------------------
      Test de connexion
      ------------------------------------------------------------------ */
   async function test(apiKey, model) {
@@ -130,5 +160,5 @@ Règles :
     });
   }
 
-  return { scanTicket, coach, test, fileToBase64 };
+  return { scanTicket, coach, review, test, fileToBase64 };
 })();

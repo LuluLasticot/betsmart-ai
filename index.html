@@ -42,6 +42,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z" transform="translate(0 2)"/><path d="M14 8v10" stroke-dasharray="2 3" transform="translate(0 -1)"/></svg>
           <span>Mes paris</span>
         </button>
+        <button class="nav-item" data-view="analytics">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg>
+          <span>Analyse</span>
+        </button>
         <button class="nav-item" data-view="coach">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
           <span>Coach IA</span>
@@ -206,6 +210,18 @@
         <div class="panel">
           <div id="betsList"></div>
         </div>
+      </section>
+
+      <!-- Analyse -->
+      <section class="view" id="view-analytics">
+        <header class="view-header">
+          <div>
+            <h1>Analyse</h1>
+            <p class="view-sub">Décortiquez votre performance sous tous les angles</p>
+          </div>
+        </header>
+        <div class="analytics-tabs" id="analyticsTabs" role="tablist"></div>
+        <div id="analyticsContent"></div>
       </section>
 
       <!-- Coach -->
@@ -441,6 +457,9 @@
       </button>
       <button class="nav-item" data-view="bets" aria-label="Mes paris">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"/></svg>
+      </button>
+      <button class="nav-item" data-view="analytics" aria-label="Analyse">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-4 3 2 4-6"/></svg>
       </button>
       <button class="fab-mobile" id="fabMobile" aria-label="Ajouter un pari">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -699,6 +718,7 @@
   <script src="js/firebase-config.js"></script>
   <script src="js/cloud.js"></script>
   <script src="js/stats.js"></script>
+  <script src="js/analytics.js"></script>
   <script src="js/gemini.js"></script>
   <script src="js/settle.js"></script>
   <script src="js/live.js"></script>

@@ -864,6 +864,93 @@ kbd {
 }
 
 /* ==========================================================================
+   Page Analyse
+   ========================================================================== */
+.analytics-tabs {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+.an-tab {
+  padding: 8px 13px;
+  border: 0; background: transparent;
+  border-bottom: 2px solid transparent;
+  color: var(--text-3);
+  font: 600 13px var(--font);
+  cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+  margin-bottom: -1px;
+}
+.an-tab:hover { color: var(--text-2); }
+.an-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.an-table { display: flex; flex-direction: column; }
+.an-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) repeat(6, minmax(0, 1fr));
+  gap: 10px; align-items: center;
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.an-row:last-child { border-bottom: 0; }
+.an-row.an-head {
+  font-size: 11px; font-weight: 600; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--border);
+}
+.an-row .r { text-align: right; font-variant-numeric: tabular-nums; }
+.an-row .an-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-row .pos { color: var(--accent); }
+.an-row .neg { color: var(--red); }
+.an-sort { cursor: pointer; user-select: none; }
+.an-sort:hover { color: var(--text); }
+
+/* Calendrier */
+.cal-nav { display: flex; align-items: center; gap: 8px; }
+.cal-nav h2 { min-width: 150px; text-align: center; }
+.cal-grid-head { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 6px; }
+.cal-grid-head span { text-align: center; font-size: 11px; color: var(--text-3); font-weight: 600; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-cell {
+  aspect-ratio: 1; border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  padding: 5px 6px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  position: relative;
+}
+.cal-cell.empty { border: 0; }
+.cal-cell .cal-day { font-size: 11px; color: var(--text-3); }
+.cal-cell.has .cal-day { color: var(--text); }
+.cal-cell .cal-val { font: 600 12px var(--mono); align-self: flex-end; color: var(--text); }
+
+/* Bilan IA */
+.review-item {
+  padding: 12px 14px; margin-bottom: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border-left: 3px solid var(--border-strong);
+}
+.review-item.pos { border-left-color: var(--accent); }
+.review-item.neg { border-left-color: var(--red); }
+.review-item h4 { font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
+.review-item p { font-size: 12.5px; color: var(--text-2); }
+.review-reco {
+  padding: 10px 14px; margin-bottom: 8px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13px; color: var(--text-2);
+}
+
+@media (max-width: 720px) {
+  .an-table { overflow-x: auto; }
+  .an-row { grid-template-columns: minmax(140px, 1.7fr) repeat(6, minmax(64px, 1fr)); min-width: 560px; }
+  .cal-cell .cal-val { font-size: 10px; }
+  .cal-nav h2 { min-width: 110px; font-size: 13px; }
+}
+
+/* ==========================================================================
    États vides & divers
    ========================================================================== */
 .empty-state {

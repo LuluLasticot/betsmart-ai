@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v21';
+  const APP_VERSION = 'v22';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -238,6 +238,7 @@
     $$('.nav-item').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
     if (view === 'dashboard') renderDashboard();
     if (view === 'bets') renderBets();
+    if (view === 'analytics') renderAnalytics();
   }
 
   /* ========================================================================
@@ -1902,6 +1903,342 @@
         renderAll();
         toast('Bookmaker retiré');
       });
+    });
+  }
+
+  /* ========================================================================
+     Analyse — page statistique complète
+     ======================================================================== */
+  const AN_TABS = [
+    ['overview', 'Vue d\'ensemble'], ['sport', 'Sport'], ['competition', 'Compétition'],
+    ['bookmaker', 'Bookmaker'], ['type', 'Type & Tipster'], ['period', 'Période'],
+    ['discipline', 'Discipline'], ['calendar', 'Calendrier'], ['ai', 'Bilan IA']
+  ];
+  const anState = { tab: 'overview', period: 'byMonth', sort: { key: 'count', dir: 'desc' }, page: 1, topN: 10, cal: new Date(), review: null };
+  const AN_PAGE_SIZE = 12;
+  const cls = (n) => (n > 0.001 ? 'pos' : n < -0.001 ? 'neg' : 'zero');
+
+  function destroyAnCharts() {
+    Object.keys(state.charts).filter((k) => k.startsWith('an_')).forEach(destroyChart);
+  }
+
+  function renderAnalytics() {
+    $('#analyticsTabs').innerHTML = AN_TABS.map(([k, l]) => `<button class="an-tab ${anState.tab === k ? 'active' : ''}" data-antab="${k}">${escapeHTML(l)}</button>`).join('');
+    $$('#analyticsTabs .an-tab').forEach((b) => b.addEventListener('click', () => {
+      anState.tab = b.dataset.antab; anState.page = 1; anState.sort = { key: 'count', dir: 'desc' }; renderAnalytics();
+    }));
+
+    destroyAnCharts();
+    const a = Analytics.compute(state.bets, state.txs, effInitial());
+    const c = $('#analyticsContent');
+    if (!a.general.count) { c.innerHTML = '<div class="empty-state"><p>Ajoutez des paris pour voir vos statistiques ici.</p></div>'; return; }
+
+    ({
+      overview: renderAnOverview, sport: renderAnSport, competition: renderAnCompetition,
+      bookmaker: renderAnBookmaker, type: renderAnType, period: renderAnPeriod,
+      discipline: renderAnDiscipline, calendar: renderAnCalendar, ai: renderAnAI
+    })[anState.tab](c, a);
+  }
+
+  /* ---- Vue d'ensemble ---- */
+  function renderAnOverview(c, a) {
+    const g = a.general;
+    c.innerHTML = `
+      <div class="kpi-grid">
+        ${anKpi('Bénéfice net', Stats.fmtSigned(g.totalProfit), cls(g.totalProfit), `${g.settled} paris réglés`)}
+        ${anKpi('ROI', Stats.fmtPct(g.roi), cls(g.roi), `${Stats.fmtMoney(g.totalStake)} misés`)}
+        ${anKpi('ROC', Stats.fmtPct(g.roc), cls(g.roc), `Capital investi ${Stats.fmtMoney(g.invested)}`)}
+        ${anKpi('Profit factor', isFinite(g.profitFactor) ? g.profitFactor.toFixed(2) : '∞', g.profitFactor >= 1 ? 'pos' : 'neg', 'Gains bruts / pertes brutes')}
+        ${anKpi('Réussite', `${g.hitRate.toFixed(0)} %`, '', `${g.won} G · ${g.lost} P`)}
+        ${anKpi('Drawdown max', a.drawdown.amount > 0 ? `−${Stats.fmtMoney(a.drawdown.amount)}` : '—', a.drawdown.amount > 0 ? 'neg' : '', 'Pire chute de profit')}
+        ${anKpi('Cote moyenne', g.avgOdds ? g.avgOdds.toFixed(2) : '—', '', `Mise moy. ${Stats.fmtMoney(g.avgStake || 0)}`)}
+        ${anKpi('Gains / pertes bruts', `${Stats.fmtMoney(g.grossWin)}`, 'pos', `Pertes ${Stats.fmtMoney(g.grossLoss)}`)}
+      </div>
+      <div class="panel-row">
+        <div class="panel"><div class="panel-head"><h2>Profit cumulé</h2></div><div class="chart-wrap"><canvas id="an_curve"></canvas></div></div>
+        <div class="panel"><div class="panel-head"><h2>Répartition des états</h2></div><div class="chart-wrap sm"><canvas id="an_outcome"></canvas></div></div>
+      </div>
+      <div class="panel-row">
+        <div class="panel"><div class="panel-head"><h2>Bénéfice par tranche de cote</h2></div><div class="chart-wrap sm"><canvas id="an_oddsProfit"></canvas></div></div>
+        <div class="panel"><div class="panel-head"><h2>Bénéfice par tranche de mise</h2></div><div class="chart-wrap sm"><canvas id="an_stakeProfit"></canvas></div></div>
+      </div>
+      <div class="panel"><div class="panel-head"><h2>Détail par tranche de cote</h2></div>${anTableHTML(a.byOddsRange, false)}</div>
+      <div class="panel"><div class="panel-head"><h2>Détail par tranche de mise</h2></div>${anTableHTML(a.byStakeRange, false)}</div>`;
+
+    anProfitCurve('an_curve', a.curve);
+    anDoughnut('an_outcome', a.outcomeDist);
+    anProfitBar('an_oddsProfit', a.byOddsRange);
+    anProfitBar('an_stakeProfit', a.byStakeRange);
+  }
+
+  /* ---- Onglets par dimension (chart + tableau triable paginé) ---- */
+  function renderAnDimension(c, rows, label, nameFmt) {
+    const sorted = anSort(rows);
+    const top = sorted.slice(0, anState.topN === Infinity ? sorted.length : anState.topN);
+    c.innerHTML = `
+      <div class="panel-row">
+        <div class="panel">
+          <div class="panel-head"><h2>Répartition par ${escapeHTML(label.toLowerCase())}</h2>${anTopSelect()}</div>
+          <div class="chart-wrap sm"><canvas id="an_dist"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Bénéfice par ${escapeHTML(label.toLowerCase())}</h2></div>
+          <div class="chart-wrap sm"><canvas id="an_prof"></canvas></div>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-head"><h2>Détail par ${escapeHTML(label.toLowerCase())}</h2></div>${anTableHTML(sorted, true, nameFmt)}</div>`;
+    anDoughnut('an_dist', top.map((r, i) => ({ name: r.name, value: r.count, color: PALETTE[i % PALETTE.length] })));
+    anProfitBar('an_prof', top);
+    bindAnTable();
+    bindAnTopSelect();
+  }
+
+  const renderAnSport = (c, a) => renderAnDimension(c, a.bySport, 'Sport');
+  const renderAnCompetition = (c, a) => renderAnDimension(c, a.byCompetition, 'Compétition');
+  const renderAnBookmaker = (c, a) => renderAnDimension(c, a.byBookmaker, 'Bookmaker');
+
+  function renderAnType(c, a) {
+    c.innerHTML = `
+      <div class="panel-row">
+        <div class="panel"><div class="panel-head"><h2>Par type de pari</h2></div><div class="chart-wrap sm"><canvas id="an_typeProf"></canvas></div></div>
+        <div class="panel"><div class="panel-head"><h2>Répartition des types</h2></div><div class="chart-wrap sm"><canvas id="an_typeDist"></canvas></div></div>
+      </div>
+      <div class="panel"><div class="panel-head"><h2>Détail par type</h2></div>${anTableHTML(a.byType, false)}</div>
+      <div class="panel"><div class="panel-head"><h2>Par tipster</h2></div>${a.byTipster.length ? anTableHTML(a.byTipster, false) : '<div class="empty-state"><p>Renseignez le champ « tipster » sur vos paris pour comparer vos pronostiqueurs.</p></div>'}</div>`;
+    anProfitBar('an_typeProf', a.byType);
+    anDoughnut('an_typeDist', a.byType.map((r, i) => ({ name: r.name, value: r.count, color: PALETTE[i % PALETTE.length] })));
+  }
+
+  function renderAnPeriod(c, a) {
+    const tabs = [['byDay', 'Jours'], ['byWeek', 'Semaines'], ['byMonth', 'Mois'], ['byYear', 'Années']];
+    const data = a[anState.period];
+    c.innerHTML = `
+      <div class="period-picker" style="margin-bottom:16px">${tabs.map(([k, l]) => `<button class="period-btn ${anState.period === k ? 'active' : ''}" data-anperiod="${k}">${l}</button>`).join('')}</div>
+      <div class="panel-row">
+        <div class="panel"><div class="panel-head"><h2>Bénéfice</h2></div><div class="chart-wrap sm"><canvas id="an_perProf"></canvas></div></div>
+        <div class="panel"><div class="panel-head"><h2>ROI &amp; réussite</h2></div><div class="chart-wrap sm"><canvas id="an_perRoi"></canvas></div></div>
+      </div>
+      <div class="panel"><div class="panel-head"><h2>Détail</h2></div>${anTableHTML(data, false)}</div>`;
+    $$('#analyticsContent [data-anperiod]').forEach((b) => b.addEventListener('click', () => { anState.period = b.dataset.anperiod; renderAnalytics(); }));
+    anProfitBar('an_perProf', data);
+    anRoiWinBar('an_perRoi', data);
+  }
+
+  function renderAnDiscipline(c, a) {
+    const g = a.general;
+    const t = a.tilt;
+    c.innerHTML = `
+      <div class="kpi-grid">
+        ${anKpi('Profit factor', isFinite(g.profitFactor) ? g.profitFactor.toFixed(2) : '∞', g.profitFactor >= 1 ? 'pos' : 'neg', g.profitFactor >= 1 ? 'Rentable' : 'À redresser')}
+        ${anKpi('Drawdown max', a.drawdown.amount > 0 ? `−${Stats.fmtMoney(a.drawdown.amount)}` : '—', a.drawdown.amount > 0 ? 'neg' : '', `${a.drawdown.pct} % du pic`)}
+        ${anKpi('Taux de tilt', `${t.rate.toFixed(0)} %`, t.rate > 30 ? 'neg' : '', `${t.events} mises gonflées après perte`)}
+        ${anKpi('Inflation moy. (tilt)', t.avgInflation ? `×${t.avgInflation.toFixed(1)}` : '—', t.avgInflation >= 1.8 ? 'neg' : '', 'Mise vs moyenne après une perte')}
+      </div>
+      <div class="market-note">Le <strong>profit factor</strong> (gains bruts ÷ pertes brutes) doit rester &gt; 1. Le <strong>tilt</strong> mesure votre tendance à sur-miser après une perte — le facteur n°1 de ruine. La <strong>calibration</strong> ci-dessous compare votre réussite réelle à la probabilité implicite des cotes que vous jouez.</div>
+      <div class="panel"><div class="panel-head"><h2>Calibration par tranche de cote</h2></div>
+        <div class="col-headers calib-grid"><span>Cotes</span><span class="r">Paris</span><span class="r">Proba implicite</span><span class="r">Réussite réelle</span></div>
+        ${a.byOddsRange.map((r) => {
+          const implied = r.avgOdds > 0 ? (100 / r.avgOdds) : 0;
+          const good = r.hitRate >= implied;
+          return `<div class="bet-row calib-grid"><div class="bet-event">${escapeHTML(r.name)}</div><div class="bet-num">${r.count}</div><div class="bet-num">${implied.toFixed(0)} %</div><div class="bet-profit ${good ? 'pos' : 'neg'}">${r.hitRate.toFixed(0)} %</div></div>`;
+        }).join('')}
+        <p class="calib-note">Une réussite réelle durablement <strong>supérieure</strong> à la proba implicite = vous battez le marché sur cette tranche.</p>
+      </div>`;
+  }
+
+  function renderAnCalendar(c, a) {
+    const ref = anState.cal;
+    const y = ref.getFullYear(), m = ref.getMonth();
+    const monthLabel = ref.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    // profit net par jour du mois
+    const byDay = {};
+    for (const b of state.bets.filter(Stats.isCounted)) {
+      const d = new Date(b.date + 'T12:00:00');
+      if (d.getFullYear() === y && d.getMonth() === m) {
+        const day = d.getDate();
+        byDay[day] = (byDay[day] || 0) + Stats.profit(b);
+      }
+    }
+    const first = new Date(y, m, 1);
+    const startDow = (first.getDay() + 6) % 7; // lundi = 0
+    const days = new Date(y, m + 1, 0).getDate();
+    const maxAbs = Math.max(1, ...Object.values(byDay).map((v) => Math.abs(v)));
+    let cells = '';
+    for (let i = 0; i < startDow; i++) cells += '<div class="cal-cell empty"></div>';
+    for (let d = 1; d <= days; d++) {
+      const v = byDay[d];
+      let style = '';
+      if (v !== undefined) {
+        const intensity = Math.min(0.85, 0.15 + Math.abs(v) / maxAbs * 0.7);
+        const col = v >= 0 ? `52,211,153` : `240,101,95`;
+        style = `background: rgba(${col}, ${intensity.toFixed(2)});`;
+      }
+      cells += `<div class="cal-cell ${v !== undefined ? 'has' : ''}" style="${style}" title="${v !== undefined ? Stats.fmtSigned(v) : ''}"><span class="cal-day">${d}</span>${v !== undefined ? `<span class="cal-val">${v >= 0 ? '+' : ''}${Math.round(v)}</span>` : ''}</div>`;
+    }
+    const monthTotal = Object.values(byDay).reduce((s, v) => s + v, 0);
+    c.innerHTML = `
+      <div class="panel">
+        <div class="panel-head">
+          <div class="cal-nav"><button class="btn-icon" id="calPrev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg></button><h2 style="text-transform:capitalize">${escapeHTML(monthLabel)}</h2><button class="btn-icon" id="calNext"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></button></div>
+          <span class="bet-profit ${cls(monthTotal)}">${Stats.fmtSigned(monthTotal)}</span>
+        </div>
+        <div class="cal-grid-head">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d) => `<span>${d}</span>`).join('')}</div>
+        <div class="cal-grid">${cells}</div>
+      </div>`;
+    $('#calPrev').addEventListener('click', () => { anState.cal = new Date(y, m - 1, 1); renderAnalytics(); });
+    $('#calNext').addEventListener('click', () => { anState.cal = new Date(y, m + 1, 1); renderAnalytics(); });
+  }
+
+  async function renderAnAI(c, a) {
+    if (!state.settings.apiKey) { c.innerHTML = '<div class="empty-state"><p>Ajoutez votre clé API Gemini dans les <strong>Réglages</strong> pour générer votre bilan personnalisé.</p></div>'; return; }
+    if (a.general.settled < 5) { c.innerHTML = `<div class="empty-state"><p>Le bilan IA nécessite au moins <strong>5 paris réglés</strong> (actuellement ${a.general.settled}).</p></div>`; return; }
+
+    if (anState.review) { c.innerHTML = anReviewHTML(anState.review); bindAnReviewBtn(a); return; }
+
+    c.innerHTML = `<div class="empty-state">
+      <p>Laissez l'IA analyser en profondeur votre historique pour révéler vos zones rentables, vos erreurs coûteuses et des recommandations concrètes.</p>
+      <button class="btn-primary" id="runReview" style="margin-top:14px">Générer mon bilan</button>
+    </div>`;
+    bindAnReviewBtn(a);
+  }
+
+  function bindAnReviewBtn(a) {
+    const btn = $('#runReview') || $('#rerunReview');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const prev = btn.textContent;
+      btn.textContent = 'Analyse en cours…';
+      try {
+        anState.review = await Gemini.review(state.settings.apiKey, state.settings.model, Analytics.reviewSummary(a));
+        anState.review.generatedAt = Date.now();
+        renderAnalytics();
+      } catch (err) {
+        btn.disabled = false; btn.textContent = prev;
+        toast(`Bilan impossible : ${err.message}`);
+      }
+    });
+  }
+
+  function anReviewHTML(r) {
+    const items = (arr, cl) => arr.map((it) => `<div class="review-item ${cl}"><h4>${escapeHTML(it.titre)}</h4><p>${escapeHTML(it.detail)}</p></div>`).join('');
+    return `
+      <div class="market-note">${escapeHTML(r.resume)}</div>
+      <div class="panel-row">
+        <div class="panel"><div class="panel-head"><h2 style="color:var(--accent)">Vos points forts</h2></div>${items(r.forces || [], 'pos')}</div>
+        <div class="panel"><div class="panel-head"><h2 style="color:var(--red)">Vos points faibles</h2></div>${items(r.faiblesses || [], 'neg')}</div>
+      </div>
+      <div class="panel"><div class="panel-head"><h2>Recommandations</h2></div>
+        ${(r.recommandations || []).map((rec) => `<div class="review-reco">→ ${escapeHTML(rec)}</div>`).join('')}
+      </div>
+      <div style="text-align:center;margin-top:10px"><button class="btn-secondary" id="rerunReview">Régénérer le bilan</button>
+      <p class="empty-hint" style="margin-top:8px">Généré le ${new Date(r.generatedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</p></div>`;
+  }
+
+  /* ---- Helpers Analyse ---- */
+  function anKpi(label, value, klass, sub) {
+    return `<div class="kpi"><div class="kpi-label">${label}</div><div class="kpi-value ${klass}">${value}</div><div class="kpi-sub">${sub}</div></div>`;
+  }
+
+  const AN_COLS = [
+    { key: 'name', name: 'Nom' },
+    { key: 'count', name: 'Paris', num: true },
+    { key: 'totalStake', name: 'Mise', num: true, fmt: (v) => Stats.fmtMoney(v) },
+    { key: 'totalProfit', name: 'Bénéfice', num: true, fmt: (v) => Stats.fmtSigned(v), color: true },
+    { key: 'roi', name: 'ROI', num: true, fmt: (v) => Stats.fmtPct(v), color: true },
+    { key: 'hitRate', name: 'Réussite', num: true, fmt: (v) => `${v.toFixed(0)} %` },
+    { key: 'avgOdds', name: 'Cote moy.', num: true, fmt: (v) => v ? v.toFixed(2) : '—' }
+  ];
+
+  function anTableHTML(rows, sortable, nameFmt) {
+    const paged = sortable ? rows.slice((anState.page - 1) * AN_PAGE_SIZE, anState.page * AN_PAGE_SIZE) : rows;
+    const pages = Math.ceil(rows.length / AN_PAGE_SIZE);
+    const head = AN_COLS.map((col) => {
+      const arrow = sortable && anState.sort.key === col.key ? (anState.sort.dir === 'asc' ? ' ↑' : ' ↓') : '';
+      return `<span class="${col.num ? 'r' : ''}${sortable ? ' an-sort' : ''}" ${sortable ? `data-sortkey="${col.key}"` : ''}>${col.name}${arrow}</span>`;
+    }).join('');
+    const body = paged.map((row) => AN_COLS.map((col) => {
+      let v = row[col.key];
+      let disp = col.key === 'name' && nameFmt ? nameFmt(v, row) : (col.fmt ? col.fmt(v) : v);
+      const colorCls = col.color ? cls(v) : '';
+      return `<span class="${col.num ? 'r ' : ''}${col.key === 'name' ? 'an-name' : ''} ${colorCls}">${disp}</span>`;
+    }).join('')).join('</div><div class="an-row">');
+    const pag = sortable && pages > 1
+      ? `<div class="pagination"><button class="btn-icon" data-anpage="prev" ${anState.page <= 1 ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg></button><span class="pagination-info">Page ${anState.page}/${pages}</span><button class="btn-icon" data-anpage="next" ${anState.page >= pages ? 'disabled' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></button></div>`
+      : '';
+    return `<div class="an-table"><div class="an-row an-head">${head}</div><div class="an-row">${body}</div></div>${pag}`;
+  }
+
+  function anSort(rows) {
+    const { key, dir } = anState.sort;
+    return rows.slice().sort((x, y) => {
+      const a = x[key], b = y[key];
+      if (typeof a === 'string') return dir === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
+      return dir === 'asc' ? a - b : b - a;
+    });
+  }
+
+  function bindAnTable() {
+    $$('#analyticsContent .an-sort').forEach((el) => el.addEventListener('click', () => {
+      const key = el.dataset.sortkey;
+      anState.sort = { key, dir: anState.sort.key === key && anState.sort.dir === 'desc' ? 'asc' : 'desc' };
+      renderAnalytics();
+    }));
+    const prev = $('#analyticsContent [data-anpage="prev"]');
+    const next = $('#analyticsContent [data-anpage="next"]');
+    if (prev) prev.addEventListener('click', () => { if (anState.page > 1) { anState.page--; renderAnalytics(); } });
+    if (next) next.addEventListener('click', () => { anState.page++; renderAnalytics(); });
+  }
+
+  function anTopSelect() {
+    return `<select class="select" id="anTop">${[['5', 5], ['10', 10], ['20', 20], ['Tous', Infinity]].map(([l, v]) => `<option value="${v}" ${anState.topN === v ? 'selected' : ''}>Top ${l}</option>`).join('')}</select>`;
+  }
+  function bindAnTopSelect() {
+    const s = $('#anTop');
+    if (s) s.addEventListener('change', () => { anState.topN = s.value === 'Infinity' ? Infinity : Number(s.value); renderAnalytics(); });
+  }
+
+  /* ---- Graphiques Analyse ---- */
+  function anDoughnut(id, items) {
+    if (!items.length) return;
+    state.charts['an_' + id] = new Chart($(`#${id}`), {
+      type: 'doughnut',
+      data: { labels: items.map((i) => i.name), datasets: [{ data: items.map((i) => i.value), backgroundColor: items.map((i) => i.color || PALETTE[0]), borderColor: '#111318', borderWidth: 3, hoverOffset: 5 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '66%', plugins: { legend: { position: 'right', labels: { color: chartDefaults.color, font: chartDefaults.font, boxWidth: 9, boxHeight: 9, padding: 8, usePointStyle: true } }, tooltip: { backgroundColor: '#1d212a', borderColor: '#2e3340', borderWidth: 1, padding: 9 } } }
+    });
+  }
+
+  function anProfitBar(id, rows) {
+    state.charts['an_' + id] = new Chart($(`#${id}`), {
+      type: 'bar',
+      data: { labels: rows.map((r) => r.name), datasets: [{ data: rows.map((r) => Math.round(r.totalProfit * 100) / 100), backgroundColor: rows.map((r) => r.totalProfit >= 0 ? 'rgba(52,211,153,0.75)' : 'rgba(240,101,95,0.75)'), borderRadius: 5, maxBarThickness: 30 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: rows.length > 6 ? 'y' : 'x', plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1d212a', borderColor: '#2e3340', borderWidth: 1, padding: 9, displayColors: false, callbacks: { label: (i) => `Bénéfice : ${Stats.fmtSigned(rows.length > 6 ? i.parsed.x : i.parsed.y)}` } } }, scales: { x: { grid: { display: false }, ticks: { color: chartDefaults.color, font: chartDefaults.font, callback: rows.length > 6 ? ((v) => Stats.fmtMoney(v)) : undefined }, border: { color: chartDefaults.borderColor } }, y: { grid: { color: 'rgba(34,38,47,0.6)' }, ticks: { color: chartDefaults.color, font: chartDefaults.font, callback: rows.length > 6 ? undefined : ((v) => Stats.fmtMoney(v)) }, border: { display: false } } } }
+    });
+  }
+
+  function anRoiWinBar(id, rows) {
+    state.charts['an_' + id] = new Chart($(`#${id}`), {
+      type: 'bar',
+      data: { labels: rows.map((r) => r.name), datasets: [
+        { label: 'ROI %', data: rows.map((r) => Math.round(r.roi * 10) / 10), backgroundColor: 'rgba(91,141,239,0.8)', borderRadius: 4, maxBarThickness: 20 },
+        { label: 'Réussite %', data: rows.map((r) => Math.round(r.hitRate * 10) / 10), backgroundColor: 'rgba(232,180,90,0.8)', borderRadius: 4, maxBarThickness: 20 }
+      ] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: chartDefaults.color, font: chartDefaults.font, boxWidth: 9, usePointStyle: true } }, tooltip: { backgroundColor: '#1d212a', borderColor: '#2e3340', borderWidth: 1, padding: 9 } }, scales: { x: { grid: { display: false }, ticks: { color: chartDefaults.color, font: chartDefaults.font }, border: { color: chartDefaults.borderColor } }, y: { grid: { color: 'rgba(34,38,47,0.6)' }, ticks: { color: chartDefaults.color, font: chartDefaults.font }, border: { display: false } } } }
+    });
+  }
+
+  function anProfitCurve(id, curve) {
+    const ctx = $(`#${id}`).getContext('2d');
+    const pts = [{ x: 'Départ', y: 0 }, ...curve.map((p) => ({ x: p.x, y: p.y }))];
+    const up = pts[pts.length - 1].y >= 0;
+    const color = up ? '#34d399' : '#f0655f';
+    const grad = ctx.createLinearGradient(0, 0, 0, 260);
+    grad.addColorStop(0, up ? 'rgba(52,211,153,0.18)' : 'rgba(240,101,95,0.18)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    state.charts['an_' + id] = new Chart(ctx, {
+      type: 'line',
+      data: { labels: pts.map((p) => p.x), datasets: [{ data: pts.map((p) => p.y), borderColor: color, backgroundColor: grad, fill: true, borderWidth: 2, pointRadius: pts.length > 40 ? 0 : 2, tension: 0.3 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1d212a', borderColor: '#2e3340', borderWidth: 1, padding: 9, displayColors: false, callbacks: { label: (i) => Stats.fmtSigned(i.parsed.y) } } }, scales: { x: { grid: { display: false }, ticks: { color: chartDefaults.color, font: chartDefaults.font, maxTicksLimit: 8 }, border: { color: chartDefaults.borderColor } }, y: { grid: { color: 'rgba(34,38,47,0.6)' }, ticks: { color: chartDefaults.color, font: chartDefaults.font, callback: (v) => Stats.fmtMoney(v) }, border: { display: false } } } }
     });
   }
 

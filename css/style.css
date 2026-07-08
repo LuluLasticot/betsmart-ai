@@ -751,6 +751,25 @@ kbd {
 .live-chip.best strong { color: var(--accent); }
 .live-warn { font-size: 11.5px; color: var(--amber); }
 
+.manual-odds {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.manual-odds label { font-size: 12.5px; color: var(--text-2); font-weight: 500; }
+.manual-odds-input { width: 90px; padding: 6px 10px; }
+.manual-odds-result { font-size: 12.5px; color: var(--text-3); }
+.manual-odds-result strong { font-family: var(--mono); }
+.manual-odds-result.pos { color: var(--accent); }
+.manual-odds-result.amber { color: var(--amber); }
+.manual-odds-result.neg { color: var(--red); }
+
+@media (max-width: 600px) {
+  .manual-odds { flex-direction: column; align-items: stretch; }
+  .manual-odds-input { width: 100%; }
+}
+
 /* Comparateur de cotes */
 .comparator-controls { display: flex; gap: 8px; }
 .comparator-grid, .col-headers.comparator-grid { grid-template-columns: minmax(0, 1fr) 72px 72px 72px; }

@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v22';
+  const APP_VERSION = 'v23';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1571,7 +1571,12 @@
       const liveLine = p.live?.prices
         ? `<div class="live-odds">${p.live.prices.map((x, j) => `<span class="live-chip ${j === 0 ? 'best' : ''}">${escapeHTML(x.book)} <strong>${x.price.toFixed(2)}</strong></span>`).join('')}${p.value_pct < 5 ? '<span class="live-warn">value réduite au prix réel — pick moins intéressant</span>' : ''}</div>`
         : p.live?.status === 'not_my_book'
-          ? `<div class="live-odds"><span class="live-warn">meilleure cote FR chez ${escapeHTML(p.live.best?.book || 'un autre book')} (${p.live.best?.price ? p.live.best.price.toFixed(2) : '?'}) — pas dans vos bookmakers. Value non garantie chez vous.</span></div>`
+          ? `<div class="live-odds"><span class="live-warn">meilleure cote FR chez ${escapeHTML(p.live.best?.book || 'un autre book')} (${p.live.best?.price ? p.live.best.price.toFixed(2) : '?'}) — pas dans vos bookmakers.</span></div>
+             <div class="manual-odds" data-pick="${i}">
+               <label>Votre meilleure cote chez vos books :</label>
+               <input type="number" class="input mono manual-odds-input" data-idx="${i}" min="1.01" step="0.01" placeholder="ex ${p.live.best?.price ? (p.live.best.price - 0.15).toFixed(2) : '2.00'}">
+               <span class="manual-odds-result" data-idx="${i}">saisissez une cote →</span>
+             </div>`
           : p.live?.status === 'no_match' || p.live?.status === 'no_league' || p.live?.status === 'no_events'
             ? '<div class="live-odds"><span class="live-warn">cotes live indisponibles pour ce match</span></div>' : '';
 
@@ -1613,8 +1618,9 @@
     container.querySelectorAll('[data-add-pick]').forEach((btn) => {
       btn.addEventListener('click', async () => {
         const p = result.picks[Number(btn.dataset.addPick)];
-        const m = Advisor.stakeFor(bankroll, p, profileKey);
-        // Trace le pick comme "suivi" pour comparer picks suivis vs ignorés
+        // Si une cote manuelle a été saisie (pick hors books), on l'utilise
+        const cote = p.manualCote || p.cote;
+        const m = Advisor.stakeFor(bankroll, { ...p, cote, cote_verifiee: true }, profileKey);
         if (p.id) {
           const stored = state.picks.find((x) => x.id === p.id);
           if (stored && !stored.followed) {
@@ -1622,7 +1628,26 @@
             await DB.savePick(stored);
           }
         }
-        prefillBetFromPick(p, m.stake);
+        prefillBetFromPick({ ...p, cote, bookmaker: p.manualCote ? '' : p.bookmaker }, m.stake);
+      });
+    });
+
+    // Saisie manuelle de cote pour les picks hors books : value + Kelly instantanés
+    container.querySelectorAll('.manual-odds-input').forEach((input) => {
+      input.addEventListener('input', () => {
+        const p = result.picks[Number(input.dataset.idx)];
+        const res = container.querySelector(`.manual-odds-result[data-idx="${input.dataset.idx}"]`);
+        const cote = parseFloat(input.value);
+        if (!(cote > 1)) { p.manualCote = null; res.textContent = 'saisissez une cote →'; res.className = 'manual-odds-result'; return; }
+        p.manualCote = cote;
+        const value = p.probabilite * cote - 1;
+        const m = Advisor.stakeFor(bankroll, { ...p, cote, cote_verifiee: true }, profileKey);
+        const valPct = (value * 100);
+        const good = valPct >= 5, ok = valPct >= 0;
+        res.className = `manual-odds-result ${good ? 'pos' : ok ? 'amber' : 'neg'}`;
+        res.innerHTML = ok
+          ? `value <strong>+${valPct.toFixed(1)} %</strong> · mise <strong>${m.stake > 0 ? Stats.fmtMoney(m.stake) : '0 €'}</strong>${good ? '' : ' (value faible)'}`
+          : `pas de value (<strong>${valPct.toFixed(1)} %</strong>) — à éviter`;
       });
     });
   }

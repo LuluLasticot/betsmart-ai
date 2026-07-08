@@ -66,10 +66,19 @@ module.exports = async (req, res) => {
     }
 
     if (type === 'nav') {
-      const html = await (await fetch(`${COTEUR}/`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR' } })).text();
-      const slugs = [...new Set((html.match(/cotes-[a-z0-9-]+/gi) || []))].filter((s) => !/boostee|bookmaker|depart/.test(s));
+      const cands = ['cotes-foot', 'cotes-tennis', 'cotes-basket', 'cotes-rugby', 'cotes-baseball', 'cotes-boxe',
+        'cotes-volley', 'cotes-football-americain', 'cotes-rugby-13', 'cotes-rugby-a-13', 'cotes-mma',
+        'cotes-hockey', 'cotes-handball'];
+      const out = {};
+      for (const p of cands) {
+        try {
+          const r = await fetch(`${COTEUR}/${p}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR', 'Accept': 'text/html' } });
+          const html = await r.text();
+          out[p] = { status: r.status, matches: (html.match(/\/cote\/[a-z0-9-]+-\d+/gi) || []).length };
+        } catch (e) { out[p] = { error: String(e && e.message) }; }
+      }
       res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, slugs });
+      return res.status(200).json({ ok: true, out });
     }
 
     if (type === 'score') {

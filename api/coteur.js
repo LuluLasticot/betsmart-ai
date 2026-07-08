@@ -66,9 +66,9 @@ module.exports = async (req, res) => {
     }
 
     if (type === 'nav') {
-      const cands = ['cotes-foot', 'cotes-tennis', 'cotes-basket', 'cotes-rugby', 'cotes-baseball', 'cotes-boxe',
-        'cotes-volley', 'cotes-football-americain', 'cotes-rugby-13', 'cotes-rugby-a-13', 'cotes-mma',
-        'cotes-hockey', 'cotes-handball'];
+      const cands = ['cotes-football-us', 'cotes-nfl', 'cotes-us-football', 'cotes-footus', 'cotes-american-football',
+        'cotes-rugby-league', 'cotes-treize', 'cotes-rugby-xiii', 'cotes-xiii', 'cotes-rugby-13-treize',
+        'cotes-hand', 'cotes-handball-fr', 'cotes-hockey-sur-glace', 'cotes-hockey-glace'];
       const out = {};
       for (const p of cands) {
         try {

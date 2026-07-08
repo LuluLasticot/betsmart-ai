@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v20';
+  const APP_VERSION = 'v21';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1260,13 +1260,14 @@
       const marches = mk.markets.map((mrk) => ({
         marche: mrk.label,
         options: mrk.options.map((o) => {
-          index[o.id] = {
+          const uid = `${m.rencId}:${o.id}`; // identifiant unique GLOBAL (match + option)
+          index[uid] = {
             sport: m.sport, competition: m.league, match: label,
             date_match: m.date.toISOString().slice(0, 10),
             heure_match: m.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
             marche: mrk.label, selection: o.selection, cote: o.cote, bookmaker: o.book, mine: o.mine
           };
-          return { id: o.id, selection: o.selection, cote: o.cote };
+          return { id: uid, selection: o.selection, cote: o.cote };
         })
       }));
       candidates.push({ match: label, sport: m.sport, competition: m.league, date: m.date.toISOString().slice(0, 10), marches });
@@ -1297,9 +1298,18 @@
         };
       })
       .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && (p.probabilite * p.cote - 1) >= 0.05 && p.confiance >= 3)
-      .sort((a, b) => (b.value_pct * b.confiance) - (a.value_pct * a.confiance))
-      .slice(0, 5);
-    return { analyse_marche: rawResult.analyse_marche || '', picks, coteurMarkets: true };
+      .sort((a, b) => (b.value_pct * b.confiance) - (a.value_pct * a.confiance));
+
+    // Un seul pick par match (garde le meilleur)
+    const seen = new Set();
+    const unique = picks.filter((p) => {
+      const key = p.match.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 5);
+
+    return { analyse_marche: rawResult.analyse_marche || '', picks: unique, coteurMarkets: true };
   }
 
   function renderRadarProgress(step) {

@@ -65,6 +65,13 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
+    if (type === 'nav') {
+      const html = await (await fetch(`${COTEUR}/`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR' } })).text();
+      const slugs = [...new Set((html.match(/cotes-[a-z0-9-]+/gi) || []))].filter((s) => !/boostee|bookmaker|depart/.test(s));
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(200).json({ ok: true, slugs });
+    }
+
     if (type === 'score') {
       // Score + statut en direct depuis la page match (rendus côté serveur)
       const slug = String(req.query.slug || '').replace(/[^a-z0-9-]/gi, '');

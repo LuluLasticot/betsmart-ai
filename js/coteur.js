@@ -21,13 +21,17 @@ const Coteur = (() => {
     { url: (u) => `https://thingproxy.freeboard.io/fetch/${u}`, wrapped: false }
   ];
 
+  // Slugs coteur.com vérifiés
   const SPORT_PAGES = {
     football: 'cotes-foot', foot: 'cotes-foot',
     tennis: 'cotes-tennis',
     basketball: 'cotes-basket', basket: 'cotes-basket',
     rugby: 'cotes-rugby',
-    handball: 'cotes-handball',
+    baseball: 'cotes-baseball',
+    boxe: 'cotes-boxe', boxing: 'cotes-boxe',
     volley: 'cotes-volley', volleyball: 'cotes-volley',
+    mma: 'cotes-mma',
+    handball: 'cotes-hand', hand: 'cotes-hand',
     hockey: 'cotes-hockey'
   };
 
@@ -362,7 +366,11 @@ const Coteur = (() => {
 
       if (e.typename === '1n2' && !s) {
         opt(o, '1n2_1', `Victoire ${H}`, b['1']); opt(o, '1n2_0', 'Match nul', b['0']); opt(o, '1n2_2', `Victoire ${A}`, b['2']);
-        add('Résultat (1N2)', o);
+        add(o.length > 2 ? 'Résultat (1N2)' : 'Vainqueur', o);
+      } else if (e.typename === '12' && !s) {
+        // Sports à 2 issues (tennis, basket, boxe, MMA, baseball…)
+        opt(o, '12_1', `Victoire ${H}`, b['1']); opt(o, '12_2', `Victoire ${A}`, b['2']);
+        add('Vainqueur', o);
       } else if (e.typename === 'DC') {
         opt(o, 'DC_1', `${H} ou Nul (double chance)`, b['1']); opt(o, 'DC_2', `Nul ou ${A} (double chance)`, b['2']); opt(o, 'DC_3', `${H} ou ${A} (double chance)`, b['3']);
         add('Double chance', o);

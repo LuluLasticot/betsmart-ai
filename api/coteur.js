@@ -65,22 +65,6 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: r.ok, html });
     }
 
-    if (type === 'nav') {
-      const cands = ['cotes-football-us', 'cotes-nfl', 'cotes-us-football', 'cotes-footus', 'cotes-american-football',
-        'cotes-rugby-league', 'cotes-treize', 'cotes-rugby-xiii', 'cotes-xiii', 'cotes-rugby-13-treize',
-        'cotes-hand', 'cotes-handball-fr', 'cotes-hockey-sur-glace', 'cotes-hockey-glace'];
-      const out = {};
-      for (const p of cands) {
-        try {
-          const r = await fetch(`${COTEUR}/${p}`, { headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR', 'Accept': 'text/html' } });
-          const html = await r.text();
-          out[p] = { status: r.status, matches: (html.match(/\/cote\/[a-z0-9-]+-\d+/gi) || []).length };
-        } catch (e) { out[p] = { error: String(e && e.message) }; }
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return res.status(200).json({ ok: true, out });
-    }
-
     if (type === 'score') {
       // Score + statut en direct depuis la page match (rendus côté serveur)
       const slug = String(req.query.slug || '').replace(/[^a-z0-9-]/gi, '');

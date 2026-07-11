@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v24';
+  const APP_VERSION = 'v25';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -57,6 +57,7 @@
 
     renderAll();
     renderTxList();
+    setTimeout(captureCLV, 3000); // capture différée de la CLV des picks dont le match a commencé
 
     // Synchronisation cloud (chargée en arrière-plan, sans bloquer l'affichage)
     bindCloud();
@@ -1268,7 +1269,8 @@
             date_match: m.date.toISOString().slice(0, 10),
             heure_match: m.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
             marche: mrk.label, selection: o.selection, cote: o.cote, bookmaker: o.book, mine: o.mine,
-            fairProb: o.fairProb, marketEdge: o.marketEdge
+            fairProb: o.fairProb, marketEdge: o.marketEdge,
+            rencId: m.rencId, optionId: o.id, kickoff: m.date.getTime()
           };
           return {
             id: uid, selection: o.selection, cote: o.cote,
@@ -1305,6 +1307,7 @@
           probabilite: prob, probaGemini: gProb, probaMarche: fair,
           value_pct: Math.round(value * 1000) / 10,
           marketEdge: info.marketEdge,
+          coteurRef: { rencId: info.rencId, optionId: info.optionId }, kickoff: info.kickoff,
           confiance: p.confiance || 3, analyse: p.analyse || '', risques: p.risques || '',
           sources: p.sources || [],
           live: info.mine === false
@@ -1687,8 +1690,35 @@
     toast('Pari pré-rempli — vérifiez la cote chez votre bookmaker');
   }
 
+  /* ---- CLV : capture de la cote de clôture au coup d'envoi ---- */
+  let clvBusy = false;
+  async function captureCLV() {
+    if (clvBusy || state.settings.oddsSource !== 'coteur') return;
+    const now = Date.now();
+    // Picks avec réf coteur dont le coup d'envoi est passé (< 6 h), CLV non encore captée
+    const targets = state.picks.filter((p) => p.coteurRef && p.kickoff && !p.clvChecked && now >= p.kickoff && (now - p.kickoff) < 6 * 3600e3).slice(0, 6);
+    if (!targets.length) return;
+    clvBusy = true;
+    let changed = false;
+    for (const p of targets) {
+      try {
+        const snap = await Coteur.optionSnapshot(p.coteurRef.rencId, p.coteurRef.optionId);
+        p.clvChecked = true;
+        if (snap && snap.cote > 1) {
+          p.closingOdds = snap.cote;
+          p.clv = Math.round((p.cote / snap.cote - 1) * 1000) / 10; // % ; > 0 = cote prise meilleure que la clôture
+        }
+        await DB.savePick(p);
+        changed = true;
+      } catch (_) { /* réessai à la prochaine ouverture */ }
+    }
+    clvBusy = false;
+    if (changed) renderRadarPerf();
+  }
+
   /* ---- Performance & calibration du Radar ---- */
   function renderRadarPerf() {
+    captureCLV(); // en arrière-plan
     const stats = Advisor.radarStats(state.picks);
     const panel = $('#radarPerfPanel');
     const openOverdue = radarPicksOverdue().length;
@@ -1708,8 +1738,11 @@
         <div class="perf-kpi"><span class="v">${stats.hitRate} %</span><span class="l">Réussite</span></div>
         <div class="perf-kpi"><span class="v ${cls(stats.flatRoi)}">${stats.flatRoi >= 0 ? '+' : ''}${stats.flatRoi} %</span><span class="l">ROI mise constante</span></div>
         ${stats.followedRoi !== null ? `<div class="perf-kpi"><span class="v ${cls(stats.followedRoi)}">${stats.followedRoi >= 0 ? '+' : ''}${stats.followedRoi} %</span><span class="l">ROI picks suivis (${stats.followedCount})</span></div>` : ''}
+        ${stats.avgClv !== null ? `<div class="perf-kpi"><span class="v ${cls(stats.avgClv)}">${stats.avgClv >= 0 ? '+' : ''}${stats.avgClv} %</span><span class="l">CLV moyenne (${stats.clvCount})</span></div>` : ''}
+        ${stats.clvPositivePct !== null ? `<div class="perf-kpi"><span class="v ${stats.clvPositivePct >= 50 ? 'pos' : 'neg'}">${stats.clvPositivePct} %</span><span class="l">Picks CLV positive</span></div>` : ''}
         <div class="perf-kpi"><span class="v">${stats.openCount}</span><span class="l">En cours</span></div>
       </div>
+      ${stats.avgClv !== null ? `<p class="calib-note" style="margin-top:0"><strong>CLV (Closing Line Value)</strong> : compare la cote prise à la cote de clôture. Une CLV moyenne <strong>positive</strong> et &gt; 50 % de picks à CLV positive = le Radar bat le marché, le meilleur signe d'un edge réel (avant même les résultats).</p>` : ''}
       ${stats.buckets.length ? `
       <div class="col-headers calib-grid"><span>Proba annoncée</span><span class="r">Picks</span><span class="r">Prédit</span><span class="r">Réel</span></div>
       ${stats.buckets.map((b) => `<div class="bet-row calib-grid">

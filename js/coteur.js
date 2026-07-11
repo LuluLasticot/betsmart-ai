@@ -413,6 +413,17 @@ const Coteur = (() => {
     return { home: H, away: A, markets };
   }
 
+  /** Cliché actuel (cote + proba juste) d'une option précise — pour la CLV. */
+  async function optionSnapshot(rencId, optionId) {
+    const mk = await getMatchMarkets(rencId);
+    if (!mk) return null;
+    for (const market of mk.markets) {
+      const o = market.options.find((x) => x.id === optionId);
+      if (o) return { cote: o.cote, fairProb: o.fairProb, book: o.book };
+    }
+    return null;
+  }
+
   /** Retrouve le match coteur correspondant à un pari (renvoie {rencId, slug, teams, date}). */
   async function findMatch(pick) {
     const page = SPORT_PAGES[norm(pick.sport).split(' ')[0]];
@@ -449,7 +460,7 @@ const Coteur = (() => {
   }
 
   return {
-    verifyPick, getUpcomingEvents, getMatchMarkets, findMatch, liveScore, test, generateToken,
+    verifyPick, getUpcomingEvents, getMatchMarkets, optionSnapshot, findMatch, liveScore, test, generateToken,
     // exposés pour tests
     _parseMatchList: parseMatchList, _bestForOutcome: bestForOutcome,
     _resolveOutcome: resolveOutcome, _betEntry: betEntry

@@ -391,6 +391,11 @@ Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ct
     const followed = picks.filter((p) => p.followed && (p.result === 'won' || p.result === 'lost'));
     const followedPl = followed.reduce((s, p) => s + (p.result === 'won' ? p.cote - 1 : -1), 0);
 
+    // CLV (Closing Line Value) : as-tu pris une meilleure cote que la clôture ?
+    const withClv = picks.filter((p) => typeof p.clv === 'number');
+    const avgClv = withClv.length ? withClv.reduce((s, p) => s + p.clv, 0) / withClv.length : null;
+    const posClv = withClv.filter((p) => p.clv > 0).length;
+
     return {
       settled: n, won,
       hitRate: Math.round(actualWinRate),
@@ -401,7 +406,10 @@ Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ct
       buckets,
       followedCount: followed.length,
       followedRoi: followed.length ? Math.round((followedPl / followed.length) * 1000) / 10 : null,
-      openCount: picks.filter((p) => !p.result).length
+      openCount: picks.filter((p) => !p.result).length,
+      clvCount: withClv.length,
+      avgClv: avgClv != null ? Math.round(avgClv * 10) / 10 : null,
+      clvPositivePct: withClv.length ? Math.round((posClv / withClv.length) * 100) : null
     };
   }
 

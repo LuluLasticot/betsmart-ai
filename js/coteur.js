@@ -119,10 +119,51 @@ const Coteur = (() => {
     return d;
   }
 
+  // Titre-case (les équipes arrivent en MAJUSCULES : "AALESUND - MOLDE")
+  const titleCase = (s) => String(s || '').toLowerCase()
+    .replace(/(^|[\s\-'/])([a-zà-ÿ])/g, (_, sep, c) => sep + c.toUpperCase());
+
+  /**
+   * Parsing de la page liste. Coteur porte désormais les métadonnées du match
+   * en attributs sur les boutons de cote : data-rencid, data-eventname
+   * ("DOM - EXT"), data-eventdate (timestamp Unix, secondes). Beaucoup plus
+   * robuste que l'ancien parsing du texte à plat. L'ancien format reste en repli.
+   */
   function parseMatchList(html) {
     const out = [];
     if (!html) return out;
     const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    const seen = new Set();
+    doc.querySelectorAll('[data-rencid][data-eventname][data-eventdate]').forEach((el) => {
+      try {
+        const rencId = el.getAttribute('data-rencid');
+        if (!rencId || seen.has(rencId)) return;
+        const name = (el.getAttribute('data-eventname') || '').replace(/\s+/g, ' ').trim();
+        const ts = Number(el.getAttribute('data-eventdate'));
+        if (!name || !ts) return;
+        const parts = name.split(/\s+[-–—]\s+/);
+        if (parts.length < 2) return;
+        const teamA = titleCase(parts[0].trim());
+        const teamB = titleCase(parts.slice(1).join(' - ').trim());
+        if (!teamA || !teamB) return;
+        const date = new Date(ts * 1000);
+        // Lien (slug) + ligue depuis l'ancre correspondante, si présente
+        const a = doc.querySelector(`a[href^="/cote/"][href*="-${rencId}"]`);
+        const slug = a ? ((a.getAttribute('href') || '').match(/\/cote\/([a-z0-9-]+)/i) || [])[1] || null : null;
+        let league = 'Coteur';
+        if (a) {
+          const lg = a.querySelector('.text-muted, .small');
+          const t = lg ? (lg.textContent || '').replace(/\s+/g, ' ').trim() : '';
+          if (t) league = t;
+        }
+        seen.add(rencId);
+        out.push({ rencId, slug, teamA, teamB, league, date });
+      } catch (_) { /* ignore */ }
+    });
+    if (out.length) return out;
+
+    // Repli : ancien format à plat ("DD/MM HH:MM TeamA vs TeamB")
     doc.querySelectorAll('a[href^="/cote/"]').forEach((el) => {
       try {
         const href = el.getAttribute('href');

@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v25';
+  const APP_VERSION = 'v26';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1284,8 +1284,17 @@
     return { candidates, index };
   }
 
+  /** Poids du marché dans la proba finale, ajusté par la calibration réalisée.
+      Sur-confiance passée (gap positif) → on fait davantage confiance au marché. */
+  function marketBlendWeight() {
+    const s = Advisor.radarStats(state.picks);
+    if (!s || s.settled < 10) return 0.65; // pas assez d'historique : blend par défaut
+    const gap = s.calibrationGap; // > 0 = le Radar surestime ses probas
+    return Math.min(0.85, Math.max(0.55, 0.65 + gap * 0.02));
+  }
+
   /** Reconstruit des picks complets à partir des option_id choisis par Gemini. */
-  function mapCoteurMarketPicks(rawResult, index) {
+  function mapCoteurMarketPicks(rawResult, index, marketWeight = 0.65) {
     const picks = (rawResult.picks || [])
       .map((p) => {
         const info = index[p.option_id];
@@ -1294,9 +1303,10 @@
         if (!(gProb > 0 && gProb < 1)) return null;
 
         // Probabilité finale = ancrage sur le marché (dévig sharp) + apport
-        // de l'analyse Gemini, écrasé vers le marché pour limiter la sur-confiance.
+        // de l'analyse Gemini. Le poids du marché est ajusté par la calibration
+        // réalisée du Radar (plus il a surestimé, plus le marché pèse).
         const fair = info.fairProb;
-        const prob = (fair != null) ? (0.65 * fair + 0.35 * gProb) : gProb;
+        const prob = (fair != null) ? (marketWeight * fair + (1 - marketWeight) * gProb) : gProb;
         const value = prob * info.cote - 1;
 
         return {
@@ -1328,7 +1338,7 @@
       return true;
     }).slice(0, 5);
 
-    return { analyse_marche: rawResult.analyse_marche || '', picks: unique, coteurMarkets: true };
+    return { analyse_marche: rawResult.analyse_marche || '', picks: unique, coteurMarkets: true, marketWeight };
   }
 
   function renderRadarProgress(step) {
@@ -1365,7 +1375,7 @@
         const { candidates, index } = await gatherCoteurMarkets(ctx);
         if (candidates.length) {
           const rawResult = await Advisor.suggestFromCoteurMarkets(state.settings.apiKey, state.settings.model, ctx, candidates, (step) => renderRadarProgress(step));
-          result = mapCoteurMarketPicks(rawResult, index);
+          result = mapCoteurMarketPicks(rawResult, index, marketBlendWeight());
         }
       }
       // Repli : inventaire Gemini classique (autres sources, ou coteur indisponible)
@@ -1631,7 +1641,10 @@
       </div>`;
     }).join('');
 
-    html += `<p class="empty-hint" style="text-align:center;margin-top:12px">Mises calculées par Kelly fractionné (profil ${escapeHTML(Advisor.PROFILES[profileKey].label.toLowerCase())}) sur une bankroll de ${Stats.fmtMoney(bankroll)}.</p>`;
+    const wNote = result.coteurMarkets && result.marketWeight
+      ? ` Probabilités calées à ${Math.round(result.marketWeight * 100)} % sur le marché${result.marketWeight > 0.66 ? ' (renforcé car le Radar a surestimé par le passé)' : ''}.`
+      : '';
+    html += `<p class="empty-hint" style="text-align:center;margin-top:12px">Mises calculées par Kelly fractionné (profil ${escapeHTML(Advisor.PROFILES[profileKey].label.toLowerCase())}) sur une bankroll de ${Stats.fmtMoney(bankroll)}.${wNote}</p>`;
     container.innerHTML = html;
 
     container.querySelectorAll('[data-add-pick]').forEach((btn) => {

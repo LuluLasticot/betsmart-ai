@@ -89,7 +89,7 @@ const Advisor = (() => {
 
 Sur tes ${settled.length} derniers picks réglés :
 - Probabilité moyenne annoncée : ${stats.avgPredicted} % — taux de réussite réel : ${stats.actualWinRate} %.
-${stats.calibrationGap > 5 ? `- Tu SURESTIMES tes probabilités de ${stats.calibrationGap} points en moyenne : sois plus conservateur, révise tes probabilités À LA BAISSE et exige plus de value.` : stats.calibrationGap < -5 ? `- Tu sous-estimes tes probabilités de ${Math.abs(stats.calibrationGap)} points : tu peux être légèrement plus assertif.` : '- Ta calibration est correcte : maintiens cette rigueur.'}
+${stats.calibrationGap > 5 ? `- Historiquement tu surestimes tes probabilités d'environ ${stats.calibrationGap} points. IMPORTANT : le système applique DÉJÀ automatiquement une correction de calibration (ancrage marché) après ta réponse — ne réduis donc PAS toi-même tes probabilités, sinon la correction est comptée deux fois. Donne ta probabilité honnête et bien argumentée ; reste simplement rigoureux et factuel.` : stats.calibrationGap < -5 ? `- Historiquement tu sous-estimes tes probabilités d'environ ${Math.abs(stats.calibrationGap)} points : tu peux être légèrement plus assertif quand un fait concret le justifie.` : '- Ta calibration est correcte : maintiens cette rigueur.'}
 - ROI théorique à mise constante : ${stats.flatRoi} %.
 ${sportLines ? `Par sport :\n${sportLines}\nÉvite de proposer des picks dans les segments où ton bilan est nettement négatif, sauf signal exceptionnellement fort.` : ''}`;
   }

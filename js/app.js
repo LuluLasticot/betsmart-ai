@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v30';
+  const APP_VERSION = 'v31';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1292,9 +1292,11 @@
       Sur-confiance passée (gap positif) → on fait davantage confiance au marché. */
   function marketBlendWeight() {
     const s = Advisor.radarStats(state.picks);
-    if (!s || s.settled < 10) return 0.45; // pas assez d'historique : blend par défaut
+    if (!s || s.settled < 10) return 0.4; // pas assez d'historique : blend par défaut
     const gap = s.calibrationGap; // > 0 = le Radar surestime ses probas
-    return Math.min(0.72, Math.max(0.35, 0.45 + gap * 0.02));
+    // Ancrage marché modéré : la calibration n'est appliquée QU'ICI (le prompt
+    // ne demande plus au modèle de réduire lui-même ses probas → plus de double comptage).
+    return Math.min(0.6, Math.max(0.3, 0.4 + gap * 0.012));
   }
 
   /** Mouvement de ligne (steam) : évolution de la proba juste depuis le dernier
@@ -1344,8 +1346,10 @@
             : { prices: [{ book: info.bookmaker, price: info.cote }] }
         };
       })
-      // Value (proba finale mélangée vs prix) suffisante + confiance minimale
-      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && p.value_pct >= 4 && p.confiance >= 3)
+      // Value (proba finale mélangée vs prix) suffisante + confiance minimale.
+      // Seuil à 2 % : face à la marge des books FR (TRJ 90-95 %), exiger +4 %
+      // revenait à demander au modèle de battre le marché de ~12 pts → abstention quasi systématique.
+      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && p.value_pct >= 2 && p.confiance >= 3)
       .sort((a, b) => (b.value_pct * b.confiance + (b.steam > 0 ? b.steam : 0)) - (a.value_pct * a.confiance + (a.steam > 0 ? a.steam : 0)));
 
     // Un seul pick par match (garde le meilleur)

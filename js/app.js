@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v28';
+  const APP_VERSION = 'v29';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1279,7 +1279,6 @@
           return {
             id: uid, selection: o.selection, cote: o.cote,
             proba_marche_pct: o.fairProb != null ? Math.round(o.fairProb * 100) : null,
-            edge_marche_pct: o.marketEdge,
             mouvement_pts: steam
           };
         })
@@ -1293,9 +1292,9 @@
       Sur-confiance passée (gap positif) → on fait davantage confiance au marché. */
   function marketBlendWeight() {
     const s = Advisor.radarStats(state.picks);
-    if (!s || s.settled < 10) return 0.65; // pas assez d'historique : blend par défaut
+    if (!s || s.settled < 10) return 0.45; // pas assez d'historique : blend par défaut
     const gap = s.calibrationGap; // > 0 = le Radar surestime ses probas
-    return Math.min(0.85, Math.max(0.55, 0.65 + gap * 0.02));
+    return Math.min(0.72, Math.max(0.35, 0.45 + gap * 0.02));
   }
 
   /** Mouvement de ligne (steam) : évolution de la proba juste depuis le dernier
@@ -1345,9 +1344,9 @@
             : { prices: [{ book: info.bookmaker, price: info.cote }] }
         };
       })
-      // On exige une value finale ET que le prix ne soit pas nettement pire que le marché
-      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && p.value_pct >= 5 && p.confiance >= 3 && (p.marketEdge == null || p.marketEdge >= -3))
-      .sort((a, b) => ((b.marketEdge || 0) + b.value_pct * b.confiance) - ((a.marketEdge || 0) + a.value_pct * a.confiance));
+      // Value (proba finale mélangée vs prix) suffisante + confiance minimale
+      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && p.value_pct >= 4 && p.confiance >= 3)
+      .sort((a, b) => (b.value_pct * b.confiance + (b.steam > 0 ? b.steam : 0)) - (a.value_pct * a.confiance + (a.steam > 0 ? a.steam : 0)));
 
     // Un seul pick par match (garde le meilleur)
     const seen = new Set();
@@ -1649,7 +1648,6 @@
           </div>
           <div>
             <span class="pick-value-badge">value +${Number(p.value_pct).toFixed(1)} %</span>
-            ${typeof p.marketEdge === 'number' ? `<span class="pick-value-badge ${p.marketEdge >= 0 ? 'edge-pos' : 'edge-neg'}" title="Avantage du prix FR vs prix juste du marché">edge marché ${p.marketEdge >= 0 ? '+' : ''}${p.marketEdge.toFixed(1)} %</span>` : ''}
             ${typeof p.steam === 'number' && Math.abs(p.steam) >= 1.5 ? `<span class="pick-value-badge ${p.steam > 0 ? 'steam-up' : 'steam-down'}" title="Mouvement de la ligne depuis le dernier relevé">${p.steam > 0 ? '↑ cote qui baisse' : '↓ cote qui monte'} ${p.steam > 0 ? '+' : ''}${p.steam.toFixed(1)} pts</span>` : ''}
             ${coteBadge}
           </div>

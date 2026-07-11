@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v31';
+  const APP_VERSION = 'v32';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1243,7 +1243,7 @@
       let events = [];
       try { events = await Coteur.getUpcomingEvents(sport, { limit: 30, withOdds: false }); } catch (_) { continue; }
       const picked = events
-        .filter((e) => e.rencId && e.date.getTime() <= now + horizonMs && e.date.getTime() > now - 2 * 3600e3)
+        .filter((e) => e.rencId && e.date.getTime() <= now + horizonMs && e.date.getTime() > now + 5 * 60e3)
         .filter((e) => !excluded.has(`${e.teamA} – ${e.teamB}`.toLowerCase()))
         .sort((a, b) => a.date - b.date)
         .slice(0, perSport);
@@ -1346,10 +1346,19 @@
             : { prices: [{ book: info.bookmaker, price: info.cote }] }
         };
       })
-      // Value (proba finale mélangée vs prix) suffisante + confiance minimale.
-      // Seuil à 2 % : face à la marge des books FR (TRJ 90-95 %), exiger +4 %
-      // revenait à demander au modèle de battre le marché de ~12 pts → abstention quasi systématique.
-      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && p.value_pct >= 2 && p.confiance >= 3)
+      // Garde-fous de base : cote jouable, confiance minimale, et on écarte les
+      // paris clairement -EV (value < -2 %). La marge des books FR (TRJ 90-95 %)
+      // rend le vrai +EV rare : plutôt que de tout rejeter, on classe et on garde
+      // les meilleurs angles (mode opportunités).
+      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && p.confiance >= 3 && p.value_pct >= -2)
+      .map((p) => ({
+        ...p,
+        // Niveau de conviction affiché à l'utilisateur
+        conviction: (p.value_pct >= 3 && p.confiance >= 4) ? 'forte'
+          : p.value_pct >= 2 ? 'correcte'
+          : 'moderee',
+        marginal: p.value_pct < 2
+      }))
       .sort((a, b) => (b.value_pct * b.confiance + (b.steam > 0 ? b.steam : 0)) - (a.value_pct * a.confiance + (a.steam > 0 ? a.steam : 0)));
 
     // Un seul pick par match (garde le meilleur)
@@ -1359,9 +1368,15 @@
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).slice(0, 5);
+    });
 
-    return { analyse_marche: rawResult.analyse_marche || '', picks: unique, coteurMarkets: true, marketWeight };
+    // Mode opportunités : s'il existe de vrais +EV (≥ 2 %), on les privilégie (jusqu'à 5) ;
+    // sinon on présente les 2-4 meilleurs angles du moment, étiquetés « conviction modérée ».
+    const strong = unique.filter((p) => p.value_pct >= 2);
+    const finalPicks = strong.length ? strong.slice(0, 5) : unique.slice(0, 4);
+    const marginalOnly = strong.length === 0 && finalPicks.length > 0;
+
+    return { analyse_marche: rawResult.analyse_marche || '', picks: finalPicks, coteurMarkets: true, marketWeight, marginalOnly };
   }
 
   function renderRadarProgress(step) {
@@ -1605,9 +1620,13 @@
     }
 
     if (!result.picks.length) {
-      html += '<div class="empty-state"><p><strong>Aucun value bet détecté</strong> sur la période — le Radar préfère s\'abstenir plutôt que de proposer des paris sans avantage statistique.</p><p class="empty-hint">Relancez demain ou élargissez la fenêtre à 72 h.</p></div>';
+      html += '<div class="empty-state"><p><strong>Aucun angle exploitable</strong> sur la période — aucun match n\'offrait de piste suffisamment solide.</p><p class="empty-hint">Relancez plus tard ou élargissez la fenêtre à 72 h (plus de matchs à analyser).</p></div>';
       container.innerHTML = html;
       return;
+    }
+
+    if (result.marginalOnly) {
+      html += `<div class="market-note" style="border-left-color:var(--amber)">Pas de <strong>+EV net</strong> sur la période (la marge des books FR est élevée). Voici les <strong>meilleurs angles du moment</strong>, à conviction modérée — des pistes à évaluer, pas des certitudes.</div>`;
     }
 
     // Staking : mode + plafond d'exposition simultanée
@@ -1651,7 +1670,8 @@
             <div class="pick-meta">${escapeHTML(p.sport)} · ${escapeHTML(p.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
           </div>
           <div>
-            <span class="pick-value-badge">value +${Number(p.value_pct).toFixed(1)} %</span>
+            <span class="pick-value-badge ${p.marginal ? 'est' : ''}">value ${Number(p.value_pct) >= 0 ? '+' : ''}${Number(p.value_pct).toFixed(1)} %</span>
+            ${p.conviction ? `<span class="pick-value-badge ${p.conviction === 'forte' ? 'live' : p.conviction === 'correcte' ? '' : 'est'}" title="Niveau de conviction du Radar">${p.conviction === 'forte' ? 'conviction forte' : p.conviction === 'correcte' ? 'value confirmée' : 'conviction modérée'}</span>` : ''}
             ${typeof p.steam === 'number' && Math.abs(p.steam) >= 1.5 ? `<span class="pick-value-badge ${p.steam > 0 ? 'steam-up' : 'steam-down'}" title="Mouvement de la ligne depuis le dernier relevé">${p.steam > 0 ? '↑ cote qui baisse' : '↓ cote qui monte'} ${p.steam > 0 ? '+' : ''}${p.steam.toFixed(1)} pts</span>` : ''}
             ${coteBadge}
           </div>

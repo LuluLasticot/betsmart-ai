@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v23';
+  const APP_VERSION = 'v24';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1260,15 +1260,21 @@
       const label = `${mk.home} – ${mk.away}`;
       const marches = mk.markets.map((mrk) => ({
         marche: mrk.label,
+        trj_pct: mrk.trj,
         options: mrk.options.map((o) => {
           const uid = `${m.rencId}:${o.id}`; // identifiant unique GLOBAL (match + option)
           index[uid] = {
             sport: m.sport, competition: m.league, match: label,
             date_match: m.date.toISOString().slice(0, 10),
             heure_match: m.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-            marche: mrk.label, selection: o.selection, cote: o.cote, bookmaker: o.book, mine: o.mine
+            marche: mrk.label, selection: o.selection, cote: o.cote, bookmaker: o.book, mine: o.mine,
+            fairProb: o.fairProb, marketEdge: o.marketEdge
           };
-          return { id: uid, selection: o.selection, cote: o.cote };
+          return {
+            id: uid, selection: o.selection, cote: o.cote,
+            proba_marche_pct: o.fairProb != null ? Math.round(o.fairProb * 100) : null,
+            edge_marche_pct: o.marketEdge
+          };
         })
       }));
       candidates.push({ match: label, sport: m.sport, competition: m.league, date: m.date.toISOString().slice(0, 10), marches });
@@ -1282,15 +1288,23 @@
       .map((p) => {
         const info = index[p.option_id];
         if (!info) return null;
-        const prob = Number(p.probabilite);
-        if (!(prob > 0 && prob < 1)) return null;
+        const gProb = Number(p.probabilite);
+        if (!(gProb > 0 && gProb < 1)) return null;
+
+        // Probabilité finale = ancrage sur le marché (dévig sharp) + apport
+        // de l'analyse Gemini, écrasé vers le marché pour limiter la sur-confiance.
+        const fair = info.fairProb;
+        const prob = (fair != null) ? (0.65 * fair + 0.35 * gProb) : gProb;
         const value = prob * info.cote - 1;
+
         return {
           sport: info.sport, competition: info.competition, match: info.match,
           date_match: info.date_match, heure_match: info.heure_match,
           marche: info.marche, selection: info.selection,
           cote: info.cote, cote_verifiee: true, bookmaker: info.bookmaker,
-          probabilite: prob, value_pct: Math.round(value * 1000) / 10,
+          probabilite: prob, probaGemini: gProb, probaMarche: fair,
+          value_pct: Math.round(value * 1000) / 10,
+          marketEdge: info.marketEdge,
           confiance: p.confiance || 3, analyse: p.analyse || '', risques: p.risques || '',
           sources: p.sources || [],
           live: info.mine === false
@@ -1298,8 +1312,9 @@
             : { prices: [{ book: info.bookmaker, price: info.cote }] }
         };
       })
-      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && (p.probabilite * p.cote - 1) >= 0.05 && p.confiance >= 3)
-      .sort((a, b) => (b.value_pct * b.confiance) - (a.value_pct * a.confiance));
+      // On exige une value finale ET que le prix ne soit pas nettement pire que le marché
+      .filter((p) => p && p.cote >= 1.4 && p.cote <= 5 && p.value_pct >= 5 && p.confiance >= 3 && (p.marketEdge == null || p.marketEdge >= -3))
+      .sort((a, b) => ((b.marketEdge || 0) + b.value_pct * b.confiance) - ((a.marketEdge || 0) + a.value_pct * a.confiance));
 
     // Un seul pick par match (garde le meilleur)
     const seen = new Set();
@@ -1588,6 +1603,7 @@
           </div>
           <div>
             <span class="pick-value-badge">value +${Number(p.value_pct).toFixed(1)} %</span>
+            ${typeof p.marketEdge === 'number' ? `<span class="pick-value-badge ${p.marketEdge >= 0 ? 'edge-pos' : 'edge-neg'}" title="Avantage du prix FR vs prix juste du marché">edge marché ${p.marketEdge >= 0 ? '+' : ''}${p.marketEdge.toFixed(1)} %</span>` : ''}
             ${coteBadge}
           </div>
         </div>

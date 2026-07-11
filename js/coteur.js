@@ -350,58 +350,64 @@ const Coteur = (() => {
     const H = capTeam(raw.info?.teamDom?.equipeNom || 'Domicile');
     const A = capTeam(raw.info?.teamExt?.equipeNom || 'Extérieur');
 
-    const opt = (arr, id, selection, o) => {
-      if (!o || !(Number(o.cote) > 1)) return;
-      const name = bookName(o.bookId);
-      arr.push({ id, selection, cote: Number(o.cote), book: name, mine: !allowed || allowed.has(norm(name)) });
-    };
     const markets = [];
-    const add = (label, opts) => { if (opts.length) markets.push({ label, options: opts }); };
+
+    // Dévigorisation : probabilités "justes" à partir de la meilleure ligne
+    // globale (best, qui intègre les books sharp type Pinnacle) sur toutes
+    // les issues du marché → référence de marché sans marge.
+    const devig = (src, keys) => {
+      const imp = {}; let sum = 0;
+      for (const k of keys) {
+        const o = src?.[k];
+        if (o && Number(o.cote) > 1) { imp[k] = 1 / Number(o.cote); sum += imp[k]; }
+      }
+      if (sum <= 0) return {};
+      const fair = {};
+      for (const k of Object.keys(imp)) fair[k] = imp[k] / sum;
+      return fair;
+    };
+
+    /** Construit un marché : outs = [[key, selection], …]. Cote = meilleur FR,
+        proba juste + edge = dévig de la ligne globale (sharp). */
+    const build = (e, label, prefix, outs) => {
+      const fr = e.bestfr || e.best || {};
+      const sharp = e.best || e.bestfr || {};
+      const keys = outs.map((x) => x[0]);
+      const fair = devig(sharp, keys);
+      const options = [];
+      for (const [k, selection] of outs) {
+        const o = fr[k];
+        if (!o || !(Number(o.cote) > 1)) continue;
+        const cote = Number(o.cote);
+        const name = bookName(o.bookId);
+        const fp = fair[k] ?? null;
+        options.push({
+          id: `${prefix}_${k}`, selection, cote, book: name,
+          mine: !allowed || allowed.has(norm(name)),
+          fairProb: fp,
+          marketEdge: fp != null ? Math.round((cote * fp - 1) * 1000) / 10 : null
+        });
+      }
+      if (options.length) markets.push({ label, options, trj: e.retourfr != null ? Math.round(e.retourfr * 10) / 10 : null });
+    };
 
     for (const e of raw.odds) {
-      const b = e.bestfr || e.best;
-      if (!b) continue;
-      const o = [];
+      if (!(e.bestfr || e.best)) continue;
       const s = e.special || '';
+      const t = thrLabel(s);
 
-      if (e.typename === '1n2' && !s) {
-        opt(o, '1n2_1', `Victoire ${H}`, b['1']); opt(o, '1n2_0', 'Match nul', b['0']); opt(o, '1n2_2', `Victoire ${A}`, b['2']);
-        add(o.length > 2 ? 'Résultat (1N2)' : 'Vainqueur', o);
-      } else if (e.typename === '12' && !s) {
-        // Sports à 2 issues (tennis, basket, boxe, MMA, baseball…)
-        opt(o, '12_1', `Victoire ${H}`, b['1']); opt(o, '12_2', `Victoire ${A}`, b['2']);
-        add('Vainqueur', o);
-      } else if (e.typename === 'DC') {
-        opt(o, 'DC_1', `${H} ou Nul (double chance)`, b['1']); opt(o, 'DC_2', `Nul ou ${A} (double chance)`, b['2']); opt(o, 'DC_3', `${H} ou ${A} (double chance)`, b['3']);
-        add('Double chance', o);
-      } else if (e.typename === 'DNB') {
-        opt(o, 'DNB_1', `${H} (remboursé si nul)`, b['1']); opt(o, 'DNB_2', `${A} (remboursé si nul)`, b['2']);
-        add('Draw No Bet', o);
-      } else if (e.typename === 'OU') {
-        const t = thrLabel(s);
-        opt(o, `OU${s}_3`, `Plus de ${t} buts`, b['3']); opt(o, `OU${s}_2`, `Moins de ${t} buts`, b['2']);
-        add(`Total buts ${t}`, o);
-      } else if (e.typename === 'HTOU') {
-        const t = thrLabel(s);
-        opt(o, `HTOU${s}_3`, `Plus de ${t} buts (1re MT)`, b['3']); opt(o, `HTOU${s}_2`, `Moins de ${t} buts (1re MT)`, b['2']);
-        add(`Total buts 1re MT ${t}`, o);
-      } else if (e.typename === 'HT') {
-        opt(o, 'HT_1', `${H} à la mi-temps`, b['1']); opt(o, 'HT_2', 'Nul à la mi-temps', b['2']); opt(o, 'HT_3', `${A} à la mi-temps`, b['3']);
-        add('Résultat 1re mi-temps (1N2)', o);
-      } else if (e.typename === 'HT2') {
-        opt(o, 'HT2_1', `${H} 2e mi-temps`, b['1']); opt(o, 'HT2_2', 'Nul 2e mi-temps', b['2']); opt(o, 'HT2_3', `${A} 2e mi-temps`, b['3']);
-        add('Résultat 2e mi-temps (1N2)', o);
-      } else if (e.typename === 'HTFT') {
-        const c = { 1: `${H}/${H}`, 2: `${H}/Nul`, 3: `${H}/${A}`, 4: `Nul/${H}`, 5: 'Nul/Nul', 6: `Nul/${A}`, 7: `${A}/${H}`, 8: `${A}/Nul`, 9: `${A}/${A}` };
-        for (const k of Object.keys(c)) opt(o, `HTFT_${k}`, `Mi-temps/Fin : ${c[k]}`, b[k]);
-        add('Mi-temps / Fin de match', o);
-      } else if (e.typename === '1n2' && s) {
-        opt(o, `H1n2${s}_1`, `${H} handicap ${s}`, b['1']); opt(o, `H1n2${s}_0`, `Nul handicap ${s}`, b['0']); opt(o, `H1n2${s}_2`, `${A} handicap ${s}`, b['2']);
-        add(`Handicap ${s}`, o);
-      } else if (e.typename === '12' && s) {
-        opt(o, `H12${s}_1`, `${H} handicap asiatique ${s}`, b['1']); opt(o, `H12${s}_2`, `${A} handicap asiatique ${s}`, b['2']);
-        add(`Handicap asiatique ${s}`, o);
-      }
+      if (e.typename === '1n2' && !s) build(e, (e.best && e.best['0']) ? 'Résultat (1N2)' : 'Vainqueur', '1n2', [['1', `Victoire ${H}`], ['0', 'Match nul'], ['2', `Victoire ${A}`]]);
+      else if (e.typename === '12' && !s) build(e, 'Vainqueur', '12', [['1', `Victoire ${H}`], ['2', `Victoire ${A}`]]);
+      else if (e.typename === 'DC') build(e, 'Double chance', 'DC', [['1', `${H} ou Nul`], ['2', `Nul ou ${A}`], ['3', `${H} ou ${A}`]]);
+      else if (e.typename === 'DNB') build(e, 'Draw No Bet', 'DNB', [['1', `${H} (remb. si nul)`], ['2', `${A} (remb. si nul)`]]);
+      else if (e.typename === 'OU') build(e, `Total buts ${t}`, `OU${s}`, [['3', `Plus de ${t} buts`], ['2', `Moins de ${t} buts`]]);
+      else if (e.typename === 'HTOU') build(e, `Total buts 1re MT ${t}`, `HTOU${s}`, [['3', `Plus de ${t} buts (1re MT)`], ['2', `Moins de ${t} buts (1re MT)`]]);
+      else if (e.typename === 'HT') build(e, 'Résultat 1re mi-temps (1N2)', 'HT', [['1', `${H} à la mi-temps`], ['2', 'Nul à la mi-temps'], ['3', `${A} à la mi-temps`]]);
+      else if (e.typename === 'HT2') build(e, 'Résultat 2e mi-temps (1N2)', 'HT2', [['1', `${H} 2e mi-temps`], ['2', 'Nul 2e mi-temps'], ['3', `${A} 2e mi-temps`]]);
+      else if (e.typename === 'HTFT') build(e, 'Mi-temps / Fin de match', 'HTFT', [['1', `Mi-temps/Fin : ${H}/${H}`], ['2', `Mi-temps/Fin : ${H}/Nul`], ['3', `Mi-temps/Fin : ${H}/${A}`], ['4', `Mi-temps/Fin : Nul/${H}`], ['5', 'Mi-temps/Fin : Nul/Nul'], ['6', `Mi-temps/Fin : Nul/${A}`], ['7', `Mi-temps/Fin : ${A}/${H}`], ['8', `Mi-temps/Fin : ${A}/Nul`], ['9', `Mi-temps/Fin : ${A}/${A}`]]);
+      else if (e.typename === '1n2' && s) build(e, `Handicap ${s}`, `H1n2${s}`, [['1', `${H} handicap ${s}`], ['0', `Nul handicap ${s}`], ['2', `${A} handicap ${s}`]]);
+      else if (e.typename === '12' && s) build(e, `Handicap asiatique ${s}`, `H12${s}`, [['1', `${H} handicap asiatique ${s}`], ['2', `${A} handicap asiatique ${s}`]]);
+
       if (markets.length >= 16) break;
     }
     return { home: H, away: A, markets };

@@ -267,17 +267,20 @@ Pour un pick 1N2, "cote" DOIT être exactement la cote fournie (cote_1/cote_N/co
 Tu es un analyste quantitatif senior en value betting. Ta force : estimer des probabilités réelles calibrées. Les cotes te sont fournies (réelles, coteur.com) — tu ne les inventes pas. Tu analyses TOUS les marchés, pas seulement le 1N2.
 ${ctx.feedback}
 
-# MATCHS ET MARCHÉS RÉELS (cotes réelles, meilleur book FR)
-Chaque option a un "id". Tu dois choisir des options par leur id.
+# MATCHS ET MARCHÉS RÉELS
+Chaque option a : "id", "cote" (meilleur book FR), "proba_marche_pct" (probabilité JUSTE du marché, dévigorisée de la meilleure ligne mondiale — c'est la meilleure estimation objective disponible), "edge_marche_pct" (avantage brut du prix FR vs marché). Chaque marché a "trj_pct" (taux de retour ; plus il est haut, plus la marge est faible et la value trouvable).
 ${JSON.stringify(candidates, null, 2)}
 
-# TRAVAIL (via Google Search)
-Pour chaque match : enquête < 48 h (blessures, compos, forme, enjeu, calendrier, H2H, météo/surface, style de jeu, moyennes de buts). Puis, sur l'ENSEMBLE des marchés proposés (résultat, double chance, DNB, over/under buts pleine ET mi-temps, mi-temps 1N2, mi-temps/fin, handicaps…), estime la probabilité réelle de chaque option pertinente et calcule value = probabilite × cote − 1 sur la cote fournie.
+# MÉTHODE (via Google Search) — ANCRAGE MARCHÉ OBLIGATOIRE
+1. Pars TOUJOURS de "proba_marche_pct" comme référence : c'est la probabilité que le marché (books sharp inclus) attribue à l'issue. Le marché a raison la plupart du temps.
+2. Enquête < 48 h : blessures, suspensions, compositions, forme réelle, enjeu, calendrier/fatigue, H2H, météo/surface, style, moyennes de buts.
+3. Ne t'écarte de proba_marche_pct QUE si tu trouves un fait CONCRET et VÉRIFIÉ que le marché n'a pas encore intégré (ex. absence majeure annoncée après l'ouverture des cotes, turnover confirmé). Sinon, colle au marché.
+4. Donne ta probabilité estimée. Elle sera automatiquement mélangée à celle du marché (le marché pèse le plus) — inutile d'être extrême.
 
 # SÉLECTION
-- Retiens les MEILLEURES value (value ≥ 5 %), tous marchés confondus — ne te limite jamais au 1N2. Si un over/under, un handicap ou un mi-temps/fin offre plus de value que le 1N2, choisis-le.
-- Cotes entre 1,40 et 5,00. Confiance 1-5 (< 3 = écarter). Maximum 5 picks, un seul par match, classés par (value × confiance).
-- Abstention possible : "picks": [] si rien ne dépasse le seuil.
+- Privilégie les options où "edge_marche_pct" est POSITIF (le book FR offre mieux que le prix juste — vraie value objective) ET où tu confirmes par un fait concret. Un edge marché positif + une raison = le meilleur pari possible.
+- Évite les marchés à "trj_pct" faible (grosse marge). Cotes 1,40–5,00. Confiance 1-5 (< 3 = écarter). Max 5 picks, un par match.
+- Abstention possible : "picks": [] si rien ne réunit edge marché et raison concrète. C'est une réponse de qualité.
 
 # CONTEXTE UTILISATEUR
 Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ctx.userPerf}

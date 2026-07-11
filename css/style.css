@@ -714,6 +714,8 @@ kbd {
   white-space: nowrap;
 }
 .pick-value-badge.est { background: var(--amber-dim); color: var(--amber); }
+.pick-value-badge.edge-pos { background: var(--accent-dim); color: var(--accent); }
+.pick-value-badge.edge-neg { background: var(--surface-3); color: var(--text-3); }
 
 .pick-selection {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;

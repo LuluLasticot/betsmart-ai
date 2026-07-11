@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v26';
+  const APP_VERSION = 'v27';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1258,24 +1258,29 @@
       let mk = null;
       try { mk = await Coteur.getMatchMarkets(m.rencId, { allowed }); } catch (_) { continue; }
       if (!mk || !mk.markets.length) continue;
+      // Snapshot historique (cron) pour détecter le mouvement de ligne (steam)
+      let snap = null;
+      try { snap = Cloud.getOddsSnapshot ? await Cloud.getOddsSnapshot(m.rencId) : null; } catch (_) {}
       const label = `${mk.home} – ${mk.away}`;
       const marches = mk.markets.map((mrk) => ({
         marche: mrk.label,
         trj_pct: mrk.trj,
         options: mrk.options.map((o) => {
           const uid = `${m.rencId}:${o.id}`; // identifiant unique GLOBAL (match + option)
+          const steam = steamFor(snap, o.id, o.fairProb); // points de proba gagnés depuis le snapshot
           index[uid] = {
             sport: m.sport, competition: m.league, match: label,
             date_match: m.date.toISOString().slice(0, 10),
             heure_match: m.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
             marche: mrk.label, selection: o.selection, cote: o.cote, bookmaker: o.book, mine: o.mine,
-            fairProb: o.fairProb, marketEdge: o.marketEdge,
+            fairProb: o.fairProb, marketEdge: o.marketEdge, steam,
             rencId: m.rencId, optionId: o.id, kickoff: m.date.getTime()
           };
           return {
             id: uid, selection: o.selection, cote: o.cote,
             proba_marche_pct: o.fairProb != null ? Math.round(o.fairProb * 100) : null,
-            edge_marche_pct: o.marketEdge
+            edge_marche_pct: o.marketEdge,
+            mouvement_pts: steam
           };
         })
       }));
@@ -1291,6 +1296,21 @@
     if (!s || s.settled < 10) return 0.65; // pas assez d'historique : blend par défaut
     const gap = s.calibrationGap; // > 0 = le Radar surestime ses probas
     return Math.min(0.85, Math.max(0.55, 0.65 + gap * 0.02));
+  }
+
+  /** Mouvement de ligne (steam) : évolution de la proba juste depuis le dernier
+      snapshot (cron). Positif = le marché s'est déplacé vers cette issue (cote
+      qui baisse, argent qui rentre) = signal fort de value avant correction. */
+  function steamFor(snap, optionId, currentFairProb) {
+    if (!snap || !snap.markets || currentFairProb == null) return null;
+    const cut = optionId.lastIndexOf('_');
+    const prefix = optionId.slice(0, cut);
+    const key = optionId.slice(cut + 1);
+    const marketKey = prefix === '1n2' ? '1n2' : prefix === '12' ? '12' : prefix === 'OU2-5' ? 'OU2-5' : null;
+    if (!marketKey) return null;
+    const prev = snap.markets[marketKey]?.[key];
+    if (prev == null) return null;
+    return Math.round((currentFairProb - prev) * 1000) / 10; // points de probabilité
   }
 
   /** Reconstruit des picks complets à partir des option_id choisis par Gemini. */
@@ -1316,7 +1336,7 @@
           cote: info.cote, cote_verifiee: true, bookmaker: info.bookmaker,
           probabilite: prob, probaGemini: gProb, probaMarche: fair,
           value_pct: Math.round(value * 1000) / 10,
-          marketEdge: info.marketEdge,
+          marketEdge: info.marketEdge, steam: info.steam,
           coteurRef: { rencId: info.rencId, optionId: info.optionId }, kickoff: info.kickoff,
           confiance: p.confiance || 3, analyse: p.analyse || '', risques: p.risques || '',
           sources: p.sources || [],
@@ -1617,6 +1637,7 @@
           <div>
             <span class="pick-value-badge">value +${Number(p.value_pct).toFixed(1)} %</span>
             ${typeof p.marketEdge === 'number' ? `<span class="pick-value-badge ${p.marketEdge >= 0 ? 'edge-pos' : 'edge-neg'}" title="Avantage du prix FR vs prix juste du marché">edge marché ${p.marketEdge >= 0 ? '+' : ''}${p.marketEdge.toFixed(1)} %</span>` : ''}
+            ${typeof p.steam === 'number' && Math.abs(p.steam) >= 1.5 ? `<span class="pick-value-badge ${p.steam > 0 ? 'steam-up' : 'steam-down'}" title="Mouvement de la ligne depuis le dernier relevé">${p.steam > 0 ? '↑ cote qui baisse' : '↓ cote qui monte'} ${p.steam > 0 ? '+' : ''}${p.steam.toFixed(1)} pts</span>` : ''}
             ${coteBadge}
           </div>
         </div>

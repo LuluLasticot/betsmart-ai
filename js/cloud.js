@@ -100,6 +100,24 @@ const Cloud = (() => {
   }
 
   /* ------------------------------------------------------------------
+     Snapshots de cotes (steam) — collection globale oddsSnapshots
+     ------------------------------------------------------------------ */
+  const snapCache = new Map();
+  async function getOddsSnapshot(rencId) {
+    if (!isConfigured()) return null;
+    const key = String(rencId);
+    const c = snapCache.get(key);
+    if (c && Date.now() - c.at < 120000) return c.data;
+    try {
+      const m = await load();
+      const snap = await m.getDoc(m.doc(db, 'oddsSnapshots', key));
+      const data = snap.exists() && snap.data()?.data ? JSON.parse(snap.data().data) : null;
+      snapCache.set(key, { at: Date.now(), data });
+      return data;
+    } catch (_) { return null; }
+  }
+
+  /* ------------------------------------------------------------------
      Synchronisation
      ------------------------------------------------------------------ */
   const betsCol = () => mods.collection(db, 'users', user.uid, 'bets');
@@ -247,5 +265,5 @@ const Cloud = (() => {
     return map[code] || err?.message || 'Erreur inconnue.';
   }
 
-  return { init, signUp, signIn, signOutUser, resetPassword, isConfigured, isOn, friendlyError };
+  return { init, signUp, signIn, signOutUser, resetPassword, getOddsSnapshot, isConfigured, isOn, friendlyError };
 })();

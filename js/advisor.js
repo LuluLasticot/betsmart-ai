@@ -268,7 +268,7 @@ Tu es un analyste quantitatif senior en value betting. Ta force : estimer des pr
 ${ctx.feedback}
 
 # MATCHS ET MARCHÉS RÉELS
-Chaque option a : "id", "cote" (meilleur book FR), "proba_marche_pct" (probabilité JUSTE du marché, dévigorisée de la meilleure ligne mondiale — c'est la meilleure estimation objective disponible), "edge_marche_pct" (avantage brut du prix FR vs marché). Chaque marché a "trj_pct" (taux de retour ; plus il est haut, plus la marge est faible et la value trouvable).
+Chaque option a : "id", "cote" (meilleur book FR), "proba_marche_pct" (probabilité JUSTE du marché, dévigorisée de la meilleure ligne mondiale — la meilleure estimation objective disponible), "edge_marche_pct" (avantage brut du prix FR vs marché), "mouvement_pts" (déplacement récent de la ligne en points de proba : POSITIF = la cote baisse, l'argent rentre sur cette issue = signal fort ; NÉGATIF = la cote monte). Chaque marché a "trj_pct" (taux de retour ; plus il est haut, plus la marge est faible et la value trouvable).
 ${JSON.stringify(candidates, null, 2)}
 
 # MÉTHODE (via Google Search) — ANCRAGE MARCHÉ OBLIGATOIRE
@@ -278,7 +278,7 @@ ${JSON.stringify(candidates, null, 2)}
 4. Donne ta probabilité estimée. Elle sera automatiquement mélangée à celle du marché (le marché pèse le plus) — inutile d'être extrême.
 
 # SÉLECTION
-- Privilégie les options où "edge_marche_pct" est POSITIF (le book FR offre mieux que le prix juste — vraie value objective) ET où tu confirmes par un fait concret. Un edge marché positif + une raison = le meilleur pari possible.
+- Privilégie les options où "edge_marche_pct" est POSITIF (le book FR offre mieux que le prix juste — vraie value objective) ET où tu confirmes par un fait concret. Un edge marché positif + un "mouvement_pts" positif (la ligne se déplace en ta faveur) + une raison concrète = le meilleur pari possible (tu prends la value AVANT que le marché finisse de corriger).
 - Évite les marchés à "trj_pct" faible (grosse marge). Cotes 1,40–5,00. Confiance 1-5 (< 3 = écarter). Max 5 picks, un par match.
 - Abstention possible : "picks": [] si rien ne réunit edge marché et raison concrète. C'est une réponse de qualité.
 

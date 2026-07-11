@@ -423,18 +423,26 @@ Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ct
     agressif:  { cap: 0.030, kellyFraction: 0.33, label: 'Agressif (max 3 % de la bankroll)' }
   };
 
-  function stakeFor(bankroll, pick, profileKey) {
+  function stakeFor(bankroll, pick, profileKey, mode = 'kelly') {
     const profile = PROFILES[profileKey] || PROFILES.equilibre;
     const b = pick.cote - 1;
     if (b <= 0 || bankroll <= 0) return { stake: 0, pctBankroll: 0, kelly: 0 };
 
     const p = pick.probabilite;
     const fullKelly = (pick.cote * p - 1) / b;
-    if (fullKelly <= 0) return { stake: 0, pctBankroll: 0, kelly: 0 };
+    if (fullKelly <= 0) return { stake: 0, pctBankroll: 0, kelly: 0 }; // pas de value → pas de mise
 
-    let fraction = fullKelly * profile.kellyFraction;
-    if (pick.cote_verifiee === false) fraction *= 0.5;
-    fraction = Math.min(fraction, profile.cap);
+    let fraction;
+    if (mode === 'flat') {
+      // Mise à plat : fraction fixe = plafond du profil (variance bien plus faible)
+      fraction = profile.cap;
+      if (pick.cote_verifiee === false) fraction *= 0.5;
+    } else {
+      // Kelly fractionné plafonné
+      fraction = fullKelly * profile.kellyFraction;
+      if (pick.cote_verifiee === false) fraction *= 0.5;
+      fraction = Math.min(fraction, profile.cap);
+    }
 
     const stake = Math.max(0, Math.floor(bankroll * fraction * 2) / 2);
     return {

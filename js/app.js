@@ -12,7 +12,7 @@
     bets: [],
     txs: [],
     picks: [],
-    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [] },
+    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25 },
     period: 'all',
     view: 'dashboard',
     charts: {},
@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v27';
+  const APP_VERSION = 'v28';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1581,7 +1581,7 @@
     container.querySelectorAll('[data-add-market]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const m = r.marches[Number(btn.dataset.addMarket)];
-        const stake = Advisor.stakeFor(k.bankroll, m, profileKey).stake;
+        const stake = Advisor.stakeFor(k.bankroll, m, profileKey, state.settings.stakingMode || 'kelly').stake;
         prefillBetFromPick({
           date_match: r.date_match, bookmaker: m.bookmaker, sport: r.sport,
           competition: r.competition, match: r.match, selection: m.selection, cote: m.cote
@@ -1607,8 +1607,21 @@
       return;
     }
 
+    // Staking : mode + plafond d'exposition simultanée
+    const mode = state.settings.stakingMode || 'kelly';
+    const rawStakes = result.picks.map((p) => Advisor.stakeFor(bankroll, p, profileKey, mode).stake);
+    const pendingStake = state.bets.filter((b) => b.status === 'pending').reduce((s, b) => s + Number(b.stake || 0), 0);
+    const maxExp = (Number(state.settings.maxExposurePct) || 25) / 100 * bankroll;
+    const budget = Math.max(0, maxExp - pendingStake);
+    const sumStakes = rawStakes.reduce((a, b) => a + b, 0);
+    const expFactor = (sumStakes > budget && sumStakes > 0) ? budget / sumStakes : 1;
+    const stakeOf = (i) => Math.max(0, Math.floor(rawStakes[i] * expFactor * 2) / 2);
+    if (expFactor < 1) {
+      html += `<div class="market-note" style="border-left-color:var(--amber)">Mises réduites : plafond d'exposition de ${state.settings.maxExposurePct || 25} % atteint (${Stats.fmtMoney(pendingStake)} déjà engagés sur vos paris en cours).</div>`;
+    }
+
     html += result.picks.map((p, i) => {
-      const m = Advisor.stakeFor(bankroll, p, profileKey);
+      const m = { stake: stakeOf(i) };
       const dateTxt = p.date_match
         ? new Date(p.date_match + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + (p.heure_match ? ` · ${p.heure_match}` : '')
         : '';
@@ -1665,15 +1678,20 @@
     const wNote = result.coteurMarkets && result.marketWeight
       ? ` Probabilités calées à ${Math.round(result.marketWeight * 100)} % sur le marché${result.marketWeight > 0.66 ? ' (renforcé car le Radar a surestimé par le passé)' : ''}.`
       : '';
-    html += `<p class="empty-hint" style="text-align:center;margin-top:12px">Mises calculées par Kelly fractionné (profil ${escapeHTML(Advisor.PROFILES[profileKey].label.toLowerCase())}) sur une bankroll de ${Stats.fmtMoney(bankroll)}.${wNote}</p>`;
+    const modeLabel = mode === 'flat' ? 'mise à plat' : 'Kelly fractionné';
+    html += `<p class="empty-hint" style="text-align:center;margin-top:12px">Mises en ${modeLabel} (profil ${escapeHTML(Advisor.PROFILES[profileKey].label.toLowerCase())}), plafond d'exposition ${state.settings.maxExposurePct || 25} %, sur une bankroll de ${Stats.fmtMoney(bankroll)}.${wNote}</p>`;
     container.innerHTML = html;
 
     container.querySelectorAll('[data-add-pick]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const p = result.picks[Number(btn.dataset.addPick)];
+        const idx = Number(btn.dataset.addPick);
+        const p = result.picks[idx];
         // Si une cote manuelle a été saisie (pick hors books), on l'utilise
         const cote = p.manualCote || p.cote;
-        const m = Advisor.stakeFor(bankroll, { ...p, cote, cote_verifiee: true }, profileKey);
+        // Mise = mode + plafond d'exposition (sauf cote manuelle → recalcul dédié)
+        const m = p.manualCote
+          ? { stake: Math.floor(Advisor.stakeFor(bankroll, { ...p, cote, cote_verifiee: true }, profileKey, mode).stake * expFactor * 2) / 2 }
+          : { stake: stakeOf(idx) };
         if (p.id) {
           const stored = state.picks.find((x) => x.id === p.id);
           if (stored && !stored.followed) {
@@ -1694,7 +1712,7 @@
         if (!(cote > 1)) { p.manualCote = null; res.textContent = 'saisissez une cote →'; res.className = 'manual-odds-result'; return; }
         p.manualCote = cote;
         const value = p.probabilite * cote - 1;
-        const m = Advisor.stakeFor(bankroll, { ...p, cote, cote_verifiee: true }, profileKey);
+        const m = Advisor.stakeFor(bankroll, { ...p, cote, cote_verifiee: true }, profileKey, mode);
         const valPct = (value * 100);
         const good = valPct >= 5, ok = valPct >= 0;
         res.className = `manual-odds-result ${good ? 'pos' : ok ? 'amber' : 'neg'}`;
@@ -1884,6 +1902,20 @@
       toast(state.settings.onlyMyBooks ? 'Value limitée à vos bookmakers' : 'Tous les bookmakers considérés');
     });
 
+    $('#setStaking').addEventListener('change', async () => {
+      state.settings.stakingMode = $('#setStaking').value;
+      await DB.setSetting('stakingMode', state.settings.stakingMode);
+      toast(state.settings.stakingMode === 'flat' ? 'Mise à plat activée' : 'Kelly fractionné activé');
+    });
+
+    $('#setMaxExposure').addEventListener('change', async () => {
+      const v = Math.max(5, Math.min(100, parseFloat($('#setMaxExposure').value) || 25));
+      state.settings.maxExposurePct = v;
+      $('#setMaxExposure').value = v;
+      await DB.setSetting('maxExposurePct', v);
+      toast(`Exposition max : ${v} %`);
+    });
+
     $('#setModel').addEventListener('change', async () => {
       state.settings.model = $('#setModel').value;
       await DB.setSetting('model', state.settings.model);
@@ -1952,6 +1984,8 @@
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;
+    $('#setStaking').value = state.settings.stakingMode || 'kelly';
+    $('#setMaxExposure').value = state.settings.maxExposurePct || 25;
     $('#setModel').value = state.settings.model;
     syncInitialField();
     syncOddsSourceUI();

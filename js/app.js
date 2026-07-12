@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v33';
+  const APP_VERSION = 'v34';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -275,12 +275,40 @@
     renderRecentBets(bets);
     renderSidebarBankroll();
     updateLiveVisibility();
+    renderLiveStrip();
   }
 
   function updateLiveVisibility() {
     const show = todaysPendingBets().length > 0;
     if ($('#liveBox')) $('#liveBox').hidden = !show;
     if ($('#liveBoxMobile')) $('#liveBoxMobile').hidden = !show;
+  }
+
+  /** Bandeau dashboard : paris en direct + imminents, mis en avant avec score et compte à rebours. */
+  function renderLiveStrip() {
+    const el = $('#liveStrip');
+    if (!el) return;
+    const items = state.bets
+      .filter((b) => b.status === 'pending')
+      .map((b) => ({ b, p: betPhase(b) }))
+      .filter((o) => o.p.phase === 'live' || o.p.phase === 'soon')
+      .sort((a, c) => (PHASE_ORDER[a.p.phase] - PHASE_ORDER[c.p.phase]) || ((a.p.ko || 0) - (c.p.ko || 0)));
+
+    if (!items.length) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    const liveN = items.filter((o) => o.p.phase === 'live').length;
+    el.innerHTML = `<div class="live-strip-head"><span class="live-dot"></span>À suivre maintenant<span class="live-strip-count">${liveN ? liveN + ' en direct' : items.length + ' imminent' + (items.length > 1 ? 's' : '')}</span></div>
+      <div class="live-strip-list">${items.map(({ b, p }) => {
+        const teams = escapeHTML((b.event || '').replace(/\s*[–—-]\s*/g, ' – '));
+        const tag = p.phase === 'live'
+          ? `<span class="ls-tag live"><span class="live-dot"></span>EN DIRECT${p.score ? ' · ' + escapeHTML(p.score) : ''}${p.min ? ' · ' + escapeHTML(p.min) : ''}</span>`
+          : `<span class="ls-tag soon">⏱ dans ${fmtCountdown(p.ko - Date.now())}</span>`;
+        return `<div class="ls-card ${p.phase}" data-id="${b.id}">
+          <div class="ls-top">${tag}<span class="ls-odds">${Number(b.odds).toFixed(2)}</span></div>
+          <div class="ls-teams">${teams}</div>
+          <div class="ls-meta">${escapeHTML(b.selection)} · ${Stats.fmtMoney(Number(b.stake))} misés</div>
+        </div>`;
+      }).join('')}</div>`;
   }
 
   function renderMonthlyChart(bets) {
@@ -569,9 +597,21 @@
 
   const BETS_PER_PAGE = 20;
 
+  /** Remonte les paris en attente (direct → imminent → à régler → à venir) en tête de liste. */
+  function sortByPhase(list) {
+    return list.map((b) => ({ b, p: betPhase(b) }))
+      .sort((x, y) => {
+        const d = PHASE_ORDER[x.p.phase] - PHASE_ORDER[y.p.phase];
+        if (d) return d;
+        if (x.p.phase !== 'settled' && x.p.ko && y.p.ko) return x.p.ko - y.p.ko;
+        return 0;
+      })
+      .map((o) => o.b);
+  }
+
   function renderBets() {
     refreshFilterOptions();
-    const bets = filteredBets();
+    const bets = sortByPhase(filteredBets());
     const k = Stats.kpis(bets, 0);
     $('#betsCount').textContent = `${bets.length} paris · ${Stats.fmtSigned(k.profit)} de profit sur la sélection`;
 
@@ -622,22 +662,76 @@
     return state.bets.filter((b) => b.status === 'pending' && b.date <= today);
   }
 
+  /* ---- Statut temporel des paris en cours (live / imminent / à venir / à régler) ---- */
+  const liveStatusById = new Map(); // id -> { phase:'live'|'finished', score, min } (coteur/Gemini)
+  const MATCH_DURATION_MS = 2.75 * 3600e3; // durée typique couverte par un match
+  const PHASE_ORDER = { live: 0, soon: 1, awaiting: 2, upcoming: 3, unknown: 4, settled: 5 };
+
+  /** Timestamp (ms) du coup d'envoi si connu : champ kickoff (pick) ou date + heure saisie. */
+  function betKickoff(b) {
+    if (b.kickoff) return Number(b.kickoff);
+    if (b.date && b.time && /^\d{1,2}:\d{2}$/.test(b.time)) {
+      const t = new Date(`${b.date}T${b.time.padStart(5, '0')}:00`);
+      return isNaN(t.getTime()) ? null : t.getTime();
+    }
+    return null;
+  }
+
+  /** Phase d'un pari : le statut live réel (coteur/Gemini) prime, sinon heuristique horaire. */
+  function betPhase(b) {
+    if (b.status !== 'pending') return { phase: 'settled' };
+    const ext = liveStatusById.get(String(b.id));
+    if (ext && ext.phase === 'live') return { phase: 'live', score: ext.score, min: ext.min, ko: betKickoff(b) };
+    if (ext && ext.phase === 'finished') return { phase: 'awaiting', finished: true, score: ext.score, ko: betKickoff(b) };
+    const ko = betKickoff(b);
+    if (!ko) return { phase: 'unknown', ko: null };
+    const now = Date.now();
+    if (now >= ko && now < ko + MATCH_DURATION_MS) return { phase: 'live', ko };
+    if (now < ko && ko - now <= 2 * 3600e3) return { phase: 'soon', ko };
+    if (now >= ko + MATCH_DURATION_MS) return { phase: 'awaiting', ko };
+    return { phase: 'upcoming', ko };
+  }
+
+  function fmtCountdown(ms) {
+    if (ms <= 0) return 'maintenant';
+    const min = Math.round(ms / 60000);
+    if (min < 60) return `${min} min`;
+    const h = Math.floor(min / 60), m = min % 60;
+    if (h < 24) return `${h} h${m ? ' ' + String(m).padStart(2, '0') : ''}`;
+    return `${Math.round(h / 24)} j`;
+  }
+
+  /** Petit badge de statut temporel affiché sur un pari en attente. */
+  function phaseBadge(tm) {
+    switch (tm.phase) {
+      case 'live': return `<span class="badge live"><span class="live-dot"></span>DIRECT${tm.score ? ' ' + escapeHTML(tm.score) : ''}</span>`;
+      case 'soon': return `<span class="badge soon">⏱ ${fmtCountdown(tm.ko - Date.now())}</span>`;
+      case 'upcoming': return `<span class="badge upcoming">à venir${tm.ko ? ' · ' + new Date(tm.ko).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}</span>`;
+      case 'awaiting': return `<span class="badge awaiting">${tm.finished ? 'terminé · à régler' : 'à régler'}</span>`;
+      default: return `<span class="badge pending">${STATUS_LABELS.pending}</span>`;
+    }
+  }
+
   function betRowHTML(b) {
     const p = Stats.profit(b);
+    const tm = betPhase(b);
     const profitCls = b.status === 'pending' ? 'zero' : p > 0.001 ? 'pos' : p < -0.001 ? 'neg' : 'zero';
     const profitTxt = b.status === 'pending' ? '—' : Stats.fmtSigned(p);
     const dateTxt = new Date(b.date + 'T00:00:00').toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
     const typeTxt = b.betType !== 'simple' ? ` · ${TYPE_LABELS[b.betType]}${b.legs > 1 ? ` ×${b.legs}` : ''}` : '';
 
-    return `<div class="bet-row" data-id="${b.id}">
+    const timingCls = b.status === 'pending' && tm.phase !== 'unknown' ? ` timing-${tm.phase}` : '';
+    const liveScore = tm.phase === 'live' && tm.score ? `<span class="bet-live-score">${escapeHTML(tm.score)}</span>` : '';
+
+    return `<div class="bet-row${timingCls}" data-id="${b.id}">
       <div class="bet-main">
-        <div class="bet-event">${escapeHTML(b.event)}</div>
+        <div class="bet-event">${escapeHTML(b.event)}${liveScore}</div>
         <div class="bet-meta">${escapeHTML(b.selection)}<span class="sep">·</span>${escapeHTML(b.sport)}${typeTxt}<span class="sep">·</span>${escapeHTML(b.bookmaker)}</div>
       </div>
       <div class="bet-num hide-m">${dateTxt}</div>
       <div class="bet-num hide-m">${Number(b.odds).toFixed(2)}</div>
       <div class="bet-num strong hide-m">${Stats.fmtMoney(Number(b.stake))}</div>
-      <div class="bet-profit ${profitCls}">${b.status === 'pending' ? `<span class="badge pending">${STATUS_LABELS.pending}</span>` : profitTxt}</div>
+      <div class="bet-profit ${profitCls}">${b.status === 'pending' ? phaseBadge(tm) : profitTxt}</div>
       <div class="bet-actions">
         ${b.status === 'pending' ? `
         <button class="btn-icon settle-won" data-action="won" aria-label="Marquer gagné" title="Gagné"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>
@@ -939,6 +1033,9 @@
 
     $('#betId').value = bet?.id || '';
     $('#fDate').value = bet?.date || new Date().toISOString().slice(0, 10);
+    $('#fKickoff').value = bet?.kickoff || '';
+    $('#fTime').value = bet?.time
+      || (bet?.kickoff ? new Date(Number(bet.kickoff)).toTimeString().slice(0, 5) : '');
     $('#fBookmaker').value = bet?.bookmaker || '';
     $('#fSport').value = bet?.sport || '';
     $('#fCompetition').value = bet?.competition || '';
@@ -986,6 +1083,8 @@
     const bet = {
       id: $('#betId').value || undefined,
       date: $('#fDate').value,
+      time: $('#fTime').value || undefined,
+      kickoff: Number($('#fKickoff').value) || undefined,
       bookmaker: $('#fBookmaker').value.trim(),
       sport: $('#fSport').value.trim(),
       competition: $('#fCompetition').value.trim(),
@@ -999,6 +1098,12 @@
       status: $('#fStatus').value,
       payout: $('#fStatus').value === 'cashout' ? (parseFloat($('#fPayout').value) || 0) : undefined
     };
+
+    // Heure saisie prioritaire : elle définit le coup d'envoi (sinon on garde le kickoff hérité d'un pick).
+    if (bet.time && /^\d{1,2}:\d{2}$/.test(bet.time)) {
+      const t = new Date(`${bet.date}T${bet.time.padStart(5, '0')}:00`);
+      if (!isNaN(t.getTime())) bet.kickoff = t.getTime();
+    }
 
     const existing = bet.id ? state.bets.find((b) => b.id === bet.id) : null;
     if (existing) bet.createdAt = existing.createdAt;
@@ -1761,6 +1866,9 @@
   function prefillBetFromPick(p, stake) {
     openBetModal();
     $('#fDate').value = p.date_match && /^\d{4}-\d{2}-\d{2}$/.test(p.date_match) ? p.date_match : new Date().toISOString().slice(0, 10);
+    if (p.kickoff) $('#fKickoff').value = p.kickoff;
+    if (p.heure_match && /^\d{1,2}:\d{2}$/.test(p.heure_match)) $('#fTime').value = p.heure_match;
+    else if (p.kickoff) $('#fTime').value = new Date(Number(p.kickoff)).toTimeString().slice(0, 5);
     $('#fBookmaker').value = p.bookmaker || '';
     $('#fSport').value = p.sport || '';
     $('#fCompetition').value = p.competition || '';
@@ -2427,6 +2535,12 @@
     $('#liveRefresh').addEventListener('click', () => refreshLive(true));
     // Rafraîchissement auto toutes les 90 s quand l'onglet est visible
     liveTimer = setInterval(() => { if (!document.hidden) refreshLive(false); }, 90000);
+    // Rafraîchissement léger des comptes à rebours / transitions (imminent → en cours) toutes les 30 s
+    setInterval(() => {
+      if (document.hidden) return;
+      renderLiveStrip();
+      if ($('#view-bets').classList.contains('active')) renderBets();
+    }, 30000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshLive(false); });
     refreshLive(false);
   }
@@ -2449,7 +2563,7 @@
     const show = matches.length > 0;
     $('#liveBox').hidden = !show;
     $('#liveBoxMobile').hidden = !show;
-    if (!show) return;
+    if (!show) { liveStatusById.clear(); renderLiveStrip(); return; }
 
     if (manual) $('#liveRefresh').classList.add('spinning');
     try {
@@ -2476,7 +2590,23 @@
         try { geminiScores = await Live.fetchScores(state.settings.apiKey, state.settings.model, unmatched); } catch (_) {}
       }
 
+      // Mémorise le statut live réel par pari → alimente les badges de la liste + le bandeau dashboard
+      liveStatusById.clear();
+      for (const c of coteurScores) {
+        if (c.finished) liveStatusById.set(String(c.id), { phase: 'finished', score: `${c.score_dom ?? 0}–${c.score_ext ?? 0}` });
+        else if (c.live || c.score_dom !== null) {
+          const st = (c.status || '').replace(/EN DIRECT\s*[•·]?\s*/i, '').trim();
+          liveStatusById.set(String(c.id), { phase: 'live', score: `${c.score_dom ?? 0}–${c.score_ext ?? 0}`, min: st || null });
+        }
+      }
+      for (const s of geminiScores) {
+        if (s.etat === 'termine') liveStatusById.set(String(s.id), { phase: 'finished', score: `${s.score_dom ?? 0}–${s.score_ext ?? 0}` });
+        else if (s.etat === 'en_cours' || s.etat === 'mi_temps') liveStatusById.set(String(s.id), { phase: 'live', score: `${s.score_dom ?? 0}–${s.score_ext ?? 0}`, min: s.etat === 'mi_temps' ? 'MT' : (s.minute || null) });
+      }
+
       renderLive(coteurScores, geminiScores, matches);
+      renderLiveStrip();
+      if ($('#view-bets').classList.contains('active')) renderBets();
     } catch (err) {
       const msg = '<p class="live-empty">Live indisponible.</p>';
       $('#liveBoxList').innerHTML = msg;

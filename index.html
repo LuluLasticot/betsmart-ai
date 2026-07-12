@@ -121,6 +121,8 @@
           </button>
         </div>
 
+        <div class="live-strip" id="liveStrip" hidden><!-- paris en direct / imminents --></div>
+
         <div class="kpi-grid" id="kpiGrid"><!-- KPI cards injectées --></div>
 
         <div class="panel chart-panel">
@@ -540,10 +542,15 @@
 
       <form id="betForm" class="bet-form">
         <input type="hidden" id="betId">
+        <input type="hidden" id="fKickoff">
         <div class="form-grid">
           <div class="field">
             <label for="fDate">Date</label>
             <input type="date" id="fDate" class="input" required>
+          </div>
+          <div class="field">
+            <label for="fTime">Heure du match <span class="opt">optionnel</span></label>
+            <input type="time" id="fTime" class="input">
           </div>
           <div class="field">
             <label for="fBookmaker">Bookmaker</label>

@@ -791,6 +791,57 @@ kbd {
 }
 .cmp-analyze:hover { background: var(--accent); color: #06281c; }
 
+/* ---- Mise en avant temporelle des paris en cours ---- */
+/* Badges de phase dans la liste des paris */
+.badge.live { background: var(--red-dim); color: var(--red); gap: 5px; font-weight: 700; }
+.badge.live .live-dot { width: 6px; height: 6px; }
+.badge.soon { background: var(--amber-dim); color: var(--amber); font-weight: 600; }
+.badge.upcoming { background: var(--surface-3); color: var(--text-2); }
+.badge.awaiting { background: var(--surface-3); color: var(--text-3); }
+
+/* Liseré coloré sur les lignes de paris selon la phase */
+.bet-row.timing-live { border-left: 2px solid var(--red); background: linear-gradient(90deg, var(--red-dim), transparent 40%); }
+.bet-row.timing-soon { border-left: 2px solid var(--amber); }
+.bet-row.timing-awaiting { border-left: 2px solid var(--border); }
+.bet-live-score {
+  margin-left: 8px; padding: 1px 7px; border-radius: 5px;
+  background: var(--red-dim); color: var(--red);
+  font: 700 12px var(--mono); vertical-align: middle;
+}
+
+/* Bandeau « À suivre maintenant » sur le dashboard */
+.live-strip { margin-bottom: 18px; }
+.live-strip-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-2); margin-bottom: 10px;
+}
+.live-strip-count {
+  margin-left: 6px; padding: 2px 8px; border-radius: 20px;
+  background: var(--red-dim); color: var(--red);
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0; text-transform: none;
+}
+.live-strip-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px;
+}
+.ls-card {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2); padding: 11px 13px;
+}
+.ls-card.live { border-color: rgba(240, 101, 95, 0.4); background: linear-gradient(180deg, var(--red-dim), var(--surface-2) 70%); }
+.ls-card.soon { border-color: rgba(232, 180, 90, 0.35); }
+.ls-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; }
+.ls-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700;
+}
+.ls-tag.live { background: var(--red-dim); color: var(--red); }
+.ls-tag.live .live-dot { width: 6px; height: 6px; }
+.ls-tag.soon { background: var(--amber-dim); color: var(--amber); }
+.ls-odds { font: 600 13px var(--mono); color: var(--text-2); }
+.ls-teams { font-size: 14px; font-weight: 600; color: var(--text-1); margin-bottom: 3px; }
+.ls-meta { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 @media (max-width: 600px) {
   .comparator-grid, .col-headers.comparator-grid { grid-template-columns: minmax(0, 1fr) 66px 66px; }
   .comparator-controls { flex-direction: column; }

@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v37';
+  const APP_VERSION = 'v38';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1640,6 +1640,8 @@
   }
 
   /* ---- Analyse d'un match précis ---- */
+  let lastMatchAnalysis = null; // { r, ctx } — pour recalculer les mises quand on change de profil Kelly
+
   async function runMatchAnalysis() {
     const query = $('#matchQuery').value.trim();
     if (!query) return;
@@ -1679,6 +1681,7 @@
           } catch (_) { break; } // quota : on garde les cotes estimées
         }
       }
+      lastMatchAnalysis = { r, ctx };
       renderMatchAnalysis(r, ctx);
     } catch (err) {
       $('#advisorContent').innerHTML = `<div class="empty-state"><p>Analyse impossible : ${escapeHTML(err.message)}</p></div>`;
@@ -1709,6 +1712,15 @@
         <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : 'Pas de +EV net'}</span>
       </div>
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
+      <div class="stake-profile-bar">
+        <span>Mise Kelly :</span>
+        <select id="matchProfile" class="select-mini" aria-label="Profil de mise Kelly">
+          <option value="prudent"${profileKey === 'prudent' ? ' selected' : ''}>prudent · ≤ 1 %</option>
+          <option value="equilibre"${profileKey === 'equilibre' ? ' selected' : ''}>normal · ≤ 2 %</option>
+          <option value="agressif"${profileKey === 'agressif' ? ' selected' : ''}>agressif · ≤ 3 %</option>
+        </select>
+        <span class="stake-profile-hint">${mode === 'flat' ? 'mode mise à plat' : 'les mises s\'ajustent au profil'}</span>
+      </div>
       <div class="markets-table">
         ${(r.marches || []).map((m, i) => {
           const verified = m.cote_verifiee !== false;   // cote confrontée à un vrai book FR
@@ -1733,6 +1745,15 @@
       ${r.risques ? `<p class="pick-risks" style="margin-top:12px"><strong>Risques :</strong> ${escapeHTML(r.risques)}</p>` : ''}
       <div class="pick-footer"><span class="pick-sources">${(r.sources || []).slice(0, 3).map(escapeHTML).join(' · ')}</span></div>
     </div>`;
+
+    // Changement de profil Kelly → on ré-affiche l'analyse avec les mises recalculées (sans rappeler l'IA)
+    const profSel = container.querySelector('#matchProfile');
+    if (profSel) {
+      profSel.addEventListener('change', () => {
+        $('#advProfile').value = profSel.value;         // profil = source unique, réutilisé par le Radar
+        renderMatchAnalysis(r, ctx);                     // recalcul instantané des mises
+      });
+    }
 
     container.querySelectorAll('[data-add-market]').forEach((btn) => {
       btn.addEventListener('click', () => {

@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v34';
+  const APP_VERSION = 'v35';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1686,6 +1686,7 @@
     }
     const dateTxt = r.date_match ? new Date(r.date_match + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + (r.heure_match ? ` · ${r.heure_match}` : '') : '';
     const profileKey = $('#advProfile').value;
+    const mode = state.settings.stakingMode || 'kelly';
     const k = Stats.kpis(state.bets, effInitial(), state.txs);
 
     container.innerHTML = `<div class="pick-card">
@@ -1699,13 +1700,18 @@
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
       <div class="markets-table">
         ${(r.marches || []).map((m, i) => {
-          const pos = m.value_pct >= 5;
+          const good = m.value_pct >= 2;          // vraie value (+EV net)
+          const playable = m.value_pct >= 0;       // au moins pas -EV → mise Kelly possible
+          const stake = Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake;
           return `<div class="market-row">
             <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')} · ${escapeHTML(m.bookmaker || '')}${m.live ? ' · ✓ direct' : m.cote_verifiee === false ? ' · cote estimée' : ''}</div></div>
             <div class="bet-num">${Number(m.cote).toFixed(2)}</div>
             <div class="bet-num hide-m">${Math.round(m.probabilite * 100)} %</div>
-            <div class="bet-profit ${pos ? 'pos' : 'neg'}">${m.value_pct >= 0 ? '+' : ''}${Number(m.value_pct).toFixed(1)} %</div>
-            <div class="avis">${escapeHTML(m.avis || '')}${pos ? ` · <button class="link-btn" data-add-market="${i}">parier</button>` : ''}</div>
+            <div class="bet-profit market-val ${good ? 'pos' : m.value_pct >= 0 ? 'zero' : 'neg'}">
+              <span>${m.value_pct >= 0 ? '+' : ''}${Number(m.value_pct).toFixed(1)} %</span>
+              <span class="market-stake">${stake > 0 ? 'mise ' + Stats.fmtMoney(stake) : '—'}</span>
+            </div>
+            <div class="avis">${escapeHTML(m.avis || '')}${playable ? ` · <button class="link-btn" data-add-market="${i}">parier${stake > 0 ? ' ' + Stats.fmtMoney(stake) : ''}</button>` : ''}</div>
           </div>`;
         }).join('')}
       </div>

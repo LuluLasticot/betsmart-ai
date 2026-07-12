@@ -171,13 +171,16 @@ Vérifications finales : value_pct = (probabilite × cote − 1) × 100 ; dates 
   function matchPrompt(ctx, query) {
     return `Tu es un analyste quantitatif senior en value betting. Date/heure actuelles : ${ctx.now} (Europe/Paris).
 ${ctx.feedback}
+${ctx.matchFacts ? '\n' + ctx.matchFacts + '\n' : ''}
+# RÈGLE ABSOLUE — ZÉRO INVENTION
+Tu ne dois JAMAIS inventer de fait, de statistique, de cote ni de source. Appuie-toi EN PRIORITÉ sur les DONNÉES RÉELLES fournies ci-dessus (forme, buts, H2H, classement). Complète-les uniquement par Google Search pour ce qu'elles ne couvrent pas (blessures, suspensions, compositions probables, enjeu, météo). Si une information reste introuvable ou incertaine, écris-le explicitement dans "risques" et NE t'en sers PAS pour gonfler une probabilité. Ne cite comme source que des sites réellement consultés (jamais de nom inventé).
 
 # MISSION
 L'utilisateur veut une analyse complète de : « ${query} »
 
-1. Identifie précisément la rencontre via Google Search (équipes/joueurs, compétition, date, heure). Si introuvable ou ambiguë, dis-le.
-2. Enquête approfondie : blessures/suspensions/compos (< 48 h), forme réelle, enjeu, fatigue/calendrier, H2H pertinents, météo/surface si sensible.
-3. Pour CHAQUE marché principal (1N2 ou vainqueur, double chance si pertinent, over/under principal, handicap principal) : estime la probabilité calibrée, trouve la cote actuelle chez ${ctx.bookmakers}, calcule value = (probabilite × cote) − 1.
+1. Identifie précisément la rencontre (les données réelles ci-dessus font foi si présentes ; sinon Google Search). Si introuvable ou ambiguë, dis-le.
+2. Enquête complémentaire via Google Search UNIQUEMENT pour ce que les données réelles ne donnent pas : blessures/suspensions/compos probables (< 48 h), enjeu, fatigue/calendrier, météo/surface si sensible.
+3. Pour CHAQUE marché principal (1N2 ou vainqueur, double chance si pertinent, over/under principal, handicap principal) : estime la probabilité calibrée À PARTIR DES FAITS, trouve la cote actuelle chez ${ctx.bookmakers} (ne l'invente pas : si tu n'as pas de cote réelle récente, mets "cote_verifiee": false — elle sera revérifiée), calcule value = (probabilite × cote) − 1.
 4. Verdict global : le meilleur angle s'il existe (value ≥ 5 %), ou "à éviter" si rien ne se dégage — dis-le franchement.
 
 Termine par un unique bloc \`\`\`json :

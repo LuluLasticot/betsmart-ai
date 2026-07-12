@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v38';
+  const APP_VERSION = 'v39';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1271,6 +1271,7 @@
       const b = ev.target.closest('.cmp-analyze');
       if (!b) return;
       $('#matchQuery').value = b.dataset.q || '';
+      lastAnalyzeSport = $('#comparatorSport').value || null; // sport connu → aide le matching SofaScore
       $('#advisorContent').scrollIntoView({ behavior: 'smooth', block: 'center' });
       runMatchAnalysis();
     });
@@ -1641,6 +1642,7 @@
 
   /* ---- Analyse d'un match précis ---- */
   let lastMatchAnalysis = null; // { r, ctx } — pour recalculer les mises quand on change de profil Kelly
+  let lastAnalyzeSport = null;  // sport du dernier match analysé (via comparateur) → matching SofaScore
 
   async function runMatchAnalysis() {
     const query = $('#matchQuery').value.trim();
@@ -1649,11 +1651,21 @@
 
     const btn = $('#analyzeMatch');
     btn.disabled = true;
-    $('#advisorContent').innerHTML = `<div class="coach-loading"><span class="spinner"></span>Analyse approfondie de « ${escapeHTML(query)} »… (~30 s)</div>`;
+    $('#advisorContent').innerHTML = `<div class="coach-loading"><span class="spinner"></span>Récupération des données réelles (SofaScore) puis analyse de « ${escapeHTML(query)} »… (~30 s)</div>`;
 
     try {
       const ctx = buildAdvisorCtx();
+      // Faits réels et récents (forme, buts, H2H, classement) → base factuelle du prompt (anti-invention)
+      const parts = query.split(/\s+[–—-]\s+|\s+vs\.?\s+/i);
+      const home = (parts[0] || '').trim(), away = (parts[1] || '').trim();
+      let facts = null;
+      if (home && away && typeof Sofa !== 'undefined') {
+        try { facts = await Sofa.matchFacts({ home, away, sport: lastAnalyzeSport, date: null }); } catch (_) {}
+      }
+      ctx.matchFacts = facts ? facts.text : '';
+
       const r = await Advisor.analyzeMatch(state.settings.apiKey, state.settings.model, ctx, query);
+      r.facts = facts; // pour l'encart « Données réelles » de l'UI
       // Vérification des marchés au prix réel avant affichage
       if (oddsProviderReady() && r.trouve && r.marches?.length) {
         for (const m of r.marches) {
@@ -1690,6 +1702,38 @@
     }
   }
 
+  /** Puce de forme colorée (V/N/D) pour l'encart données réelles. */
+  function formPills(streak) {
+    if (!streak) return '';
+    return streak.split(' ').map((c) => {
+      const cls = c === 'V' ? 'w' : c === 'D' ? 'l' : 'd';
+      return `<span class="form-pill ${cls}">${c}</span>`;
+    }).join('');
+  }
+
+  /** Encart « Données réelles » (SofaScore) affiché dans l'analyse d'un match. */
+  function matchFactsHTML(facts) {
+    if (!facts) {
+      return `<div class="facts-box empty"><span class="facts-none">Données SofaScore indisponibles pour ce match — analyse basée sur la recherche web. L'IA a pour consigne de ne rien inventer.</span></div>`;
+    }
+    const teamRow = (name, f, stand) => {
+      if (!f) return `<div class="facts-team"><div class="facts-team-name">${escapeHTML(name)}</div><div class="facts-form-muted">forme indisponible</div></div>`;
+      const pos = stand ? `<span class="facts-standing">${stand.position}ᵉ · ${stand.points} pts</span>` : '';
+      return `<div class="facts-team">
+        <div class="facts-team-name">${escapeHTML(name)} ${pos}</div>
+        <div class="facts-form">${formPills(f.streak)}<span class="facts-goals">${f.gf} bp / ${f.ga} bc</span></div>
+      </div>`;
+    };
+    const h2h = facts.h2h
+      ? `<div class="facts-h2h">Face-à-face : <strong>${facts.h2h.homeWins}</strong> V ${escapeHTML(facts.homeName)} · <strong>${facts.h2h.draws}</strong> nuls · <strong>${facts.h2h.awayWins}</strong> V ${escapeHTML(facts.awayName)}</div>`
+      : '';
+    return `<div class="facts-box">
+      <div class="facts-head">Données réelles · <span>SofaScore</span></div>
+      <div class="facts-teams">${teamRow(facts.homeName, facts.homeForm, facts.homeStanding)}${teamRow(facts.awayName, facts.awayForm, facts.awayStanding)}</div>
+      ${h2h}
+    </div>`;
+  }
+
   function renderMatchAnalysis(r, ctx) {
     const container = $('#advisorContent');
     if (!r.trouve) {
@@ -1702,6 +1746,7 @@
     const k = Stats.kpis(state.bets, effInitial(), state.txs);
     // Verdict basé sur les cotes RÉELLES vérifiées (pas sur les cotes estimées par le modèle)
     const hasRealValue = (r.marches || []).some((m) => m.cote_verifiee !== false && Number(m.value_pct) >= 2);
+    const factsHTML = matchFactsHTML(r.facts);
 
     container.innerHTML = `<div class="pick-card">
       <div class="pick-top">
@@ -1712,6 +1757,7 @@
         <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : 'Pas de +EV net'}</span>
       </div>
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
+      ${factsHTML}
       <div class="stake-profile-bar">
         <span>Mise Kelly :</span>
         <select id="matchProfile" class="select-mini" aria-label="Profil de mise Kelly">

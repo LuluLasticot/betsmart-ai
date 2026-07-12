@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v36';
+  const APP_VERSION = 'v37';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1665,6 +1665,15 @@
               m.cote = v.best.price;
               m.bookmaker = v.best.book;
               m.cote_verifiee = true;
+              m.notMyBook = false;
+              m.value_pct = Math.round((m.probabilite * m.cote - 1) * 1000) / 10;
+            } else if (v.status === 'not_my_book' && v.best) {
+              // Vraie cote du marché FR, mais chez un book non configuré : on la prend quand même
+              // (bien plus fiable qu'une cote inventée par le modèle) en le signalant.
+              m.cote = v.best.price;
+              m.bookmaker = v.best.book;
+              m.cote_verifiee = true;
+              m.notMyBook = true;
               m.value_pct = Math.round((m.probabilite * m.cote - 1) * 1000) / 10;
             }
           } catch (_) { break; } // quota : on garde les cotes estimées
@@ -1688,6 +1697,8 @@
     const profileKey = $('#advProfile').value;
     const mode = state.settings.stakingMode || 'kelly';
     const k = Stats.kpis(state.bets, effInitial(), state.txs);
+    // Verdict basé sur les cotes RÉELLES vérifiées (pas sur les cotes estimées par le modèle)
+    const hasRealValue = (r.marches || []).some((m) => m.cote_verifiee !== false && Number(m.value_pct) >= 2);
 
     container.innerHTML = `<div class="pick-card">
       <div class="pick-top">
@@ -1695,22 +1706,26 @@
           <h3>${escapeHTML(r.match)}</h3>
           <div class="pick-meta">${escapeHTML(r.sport || '')} · ${escapeHTML(r.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
         </div>
-        <span class="verdict-badge ${r.verdict === 'a_jouer' ? 'play' : 'avoid'}">${r.verdict === 'a_jouer' ? 'Value détectée' : 'À éviter'}</span>
+        <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : 'Pas de +EV net'}</span>
       </div>
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
       <div class="markets-table">
         ${(r.marches || []).map((m, i) => {
-          const good = m.value_pct >= 2;          // vraie value (+EV net)
-          const playable = m.value_pct >= 0;       // au moins pas -EV → mise Kelly possible
-          const stake = Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake;
+          const verified = m.cote_verifiee !== false;   // cote confrontée à un vrai book FR
+          const good = verified && m.value_pct >= 2;      // vraie value (+EV net)
+          const playable = verified && m.value_pct >= 0;  // pas -EV + cote réelle → mise Kelly
+          const stake = verified ? Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake : 0;
+          const bookTxt = m.live ? ' · ✓ direct' : m.notMyBook ? ` · ${escapeHTML(m.bookmaker || '')} (hors de vos books)` : verified ? '' : ' · cote estimée, non vérifiée';
           return `<div class="market-row">
-            <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')} · ${escapeHTML(m.bookmaker || '')}${m.live ? ' · ✓ direct' : m.cote_verifiee === false ? ' · cote estimée' : ''}</div></div>
+            <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')}${verified ? ' · ' + escapeHTML(m.bookmaker || '') : ''}${bookTxt}</div></div>
             <div class="bet-num">${Number(m.cote).toFixed(2)}</div>
             <div class="bet-num hide-m">${Math.round(m.probabilite * 100)} %</div>
-            <div class="bet-profit market-val ${good ? 'pos' : m.value_pct >= 0 ? 'zero' : 'neg'}">
-              <span>${m.value_pct >= 0 ? '+' : ''}${Number(m.value_pct).toFixed(1)} %</span>
-              <span class="market-stake">${stake > 0 ? 'mise ' + Stats.fmtMoney(stake) : '—'}</span>
-            </div>
+            ${verified
+              ? `<div class="bet-profit market-val ${good ? 'pos' : m.value_pct >= 0 ? 'zero' : 'neg'}">
+                  <span>${m.value_pct >= 0 ? '+' : ''}${Number(m.value_pct).toFixed(1)} %</span>
+                  <span class="market-stake">${stake > 0 ? 'mise ' + Stats.fmtMoney(stake) : '—'}</span>
+                </div>`
+              : `<div class="bet-profit market-val zero"><span class="market-unverified">non vérifiée</span></div>`}
             <div class="avis">${escapeHTML(m.avis || '')}${playable ? ` · <button class="link-btn" data-add-market="${i}">parier${stake > 0 ? ' ' + Stats.fmtMoney(stake) : ''}</button>` : ''}</div>
           </div>`;
         }).join('')}

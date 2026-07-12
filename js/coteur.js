@@ -276,22 +276,52 @@ const Coteur = (() => {
   /** Encode un seuil over/under au format coteur : 2.5 → "2-5", 3 → "3". */
   const encodeThreshold = (thr) => String(thr).replace('.', '-');
 
-  /** Détermine le marché + issue coteur ciblés par la sélection du pick. */
+  /** Détermine le marché + issue coteur ciblés par la sélection du pick.
+      Renvoie { typename, keys, special? } ou null si le marché n'est pas résoluble
+      de façon fiable (dans ce cas on NE remplace PAS la cote → pas de valeur fausse). */
   function resolveOutcome(pick, match) {
     const sel = norm(pick.selection);
+    const mk = norm(pick.marche);
+    const selToks = toks(String(pick.selection || '').replace(/victoire|gagnant|vainqueur|gagne|win|rembours\w*|remb\.?|si nul/gi, ''));
+    const isHome = !!(match && teamMatch(selToks, match.teamA));
+    const isAway = !!(match && teamMatch(selToks, match.teamB));
+    const hasDraw = /\bnul\b|\bdraw\b|match nul/.test(sel);
+
     // Over / Under (buts/points) : special = seuil encodé, over='3', under='2'
     const thrRaw = (String(pick.selection || '').match(/(\d+(?:[.,]\d)?)/) || [])[1];
-    if (thrRaw && /\b(plus|moins|over|under)\b|but|point/.test(sel)) {
+    if (thrRaw && !/handicap/.test(mk) && (/\b(plus|moins|over|under)\b/.test(sel) || /total|but|point|over|under/.test(mk))) {
       const thr = thrRaw.replace(',', '.');
       const over = /plus|over/.test(sel);
-      return { typename: 'OU', special: encodeThreshold(thr), keys: [over ? '3' : '2'] };
+      const half = /mi-?temps|1re|1ere|\bht\b|1ère/.test(mk);
+      return { typename: half ? 'HTOU' : 'OU', special: encodeThreshold(thr), keys: [over ? '3' : '2'] };
     }
-    // Nul
-    if (/\bnul\b|draw|match nul/.test(sel)) return { typename: '1n2', keys: ['0'] };
-    // Victoire → domicile ('1') ou extérieur ('2')
-    const selToks = toks(pick.selection.replace(/victoire|gagnant|vainqueur|gagne|win/gi, ''));
-    if (match && teamMatch(selToks, match.teamB) && !teamMatch(selToks, match.teamA)) return { typename: '1n2', keys: ['2'] };
-    return { typename: '1n2', keys: ['1'] };
+
+    // Double chance ('1'=1X domicile ou nul, '2'=X2 nul ou extérieur, '3'=12 domicile ou extérieur)
+    if (/double chance/.test(mk) || (/\bou\b/.test(sel) && (hasDraw || (isHome && isAway)))) {
+      if (hasDraw && isHome) return { typename: 'DC', keys: ['1'] };
+      if (hasDraw && isAway) return { typename: 'DC', keys: ['2'] };
+      if (isHome && isAway) return { typename: 'DC', keys: ['3'] };
+    }
+
+    // Draw No Bet (remboursé si nul)
+    if (/draw no bet|\bdnb\b|remb/.test(mk) || /remb/.test(sel)) {
+      if (isAway && !isHome) return { typename: 'DNB', keys: ['2'] };
+      if (isHome) return { typename: 'DNB', keys: ['1'] };
+    }
+
+    // Résultat sec 1N2 (ou repli quand le libellé est absent)
+    if (/1n2|1x2|resultat|vainqueur|match sec|\bmt\b/.test(mk) || !mk || /1n2/.test(mk)) {
+      if (hasDraw) return { typename: '1n2', keys: ['0'] };
+      if (isAway && !isHome) return { typename: '1n2', keys: ['2'] };
+      if (isHome) return { typename: '1n2', keys: ['1'] };
+    }
+
+    // Dernier repli sur des indices d'issue clairs
+    if (hasDraw) return { typename: '1n2', keys: ['0'] };
+    if (isAway && !isHome) return { typename: '1n2', keys: ['2'] };
+    if (isHome && !isAway) return { typename: '1n2', keys: ['1'] };
+
+    return null; // marché non identifié → ne pas remplacer la cote (évite les valeurs aberrantes)
   }
 
   /* ------------------------------------------------------------------
@@ -328,9 +358,10 @@ const Coteur = (() => {
     if (!raw) return { status: 'no_market', event: found };
 
     const target = resolveOutcome(pick, found);
-    const entry = target.typename === 'OU'
-      ? betEntry(raw, 'OU', target.special)
-      : (betEntry(raw, '1n2') || betEntry(raw, '12'));
+    if (!target) return { status: 'no_market', event: found }; // marché non résolu → on garde la cote d'origine
+    const entry = target.special !== undefined
+      ? betEntry(raw, target.typename, target.special)
+      : (betEntry(raw, target.typename) || (target.typename === '1n2' ? betEntry(raw, '12') : null));
     if (!entry) return { status: 'no_market', event: found };
 
     const best = bestForOutcome(entry, target.keys, { allowed });

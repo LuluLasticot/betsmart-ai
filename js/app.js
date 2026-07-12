@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v32';
+  const APP_VERSION = 'v33';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1161,6 +1161,14 @@
     $('#matchQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runMatchAnalysis(); } });
     $('#settlePicks').addEventListener('click', settleRadarPicks);
     $('#loadComparator').addEventListener('click', loadComparator);
+    // Clic sur « Analyser par le Radar » d'une ligne du comparateur → analyse approfondie du match
+    $('#comparatorContent').addEventListener('click', (ev) => {
+      const b = ev.target.closest('.cmp-analyze');
+      if (!b) return;
+      $('#matchQuery').value = b.dataset.q || '';
+      $('#advisorContent').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      runMatchAnalysis();
+    });
     renderRadarPerf();
     restoreLastRadar();
   }
@@ -1186,7 +1194,11 @@
           const cell = (o) => o ? `<div class="cmp-odd${o.notMine ? ' notmine' : ''}"><span class="v">${o.price.toFixed(2)}</span><span class="b">${escapeHTML(o.book)}</span></div>` : '<div class="cmp-odd empty">—</div>';
           const dateTxt = e.date.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' ' + e.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
           return `<div class="bet-row comparator-grid">
-            <div class="bet-main"><div class="bet-event">${escapeHTML(e.teamA)} – ${escapeHTML(e.teamB)}</div><div class="bet-meta">${escapeHTML(e.league)} · ${dateTxt}</div></div>
+            <div class="bet-main">
+              <div class="bet-event">${escapeHTML(e.teamA)} – ${escapeHTML(e.teamB)}</div>
+              <div class="bet-meta">${escapeHTML(e.league)} · ${dateTxt}</div>
+              <button class="cmp-analyze" data-q="${escapeHTML(e.teamA + ' – ' + e.teamB)}">◎ Analyser par le Radar</button>
+            </div>
             ${cell(e.odds?.home)}${(() => { const c = cell(e.odds?.draw); return c.replace('cmp-odd', 'cmp-odd hide-m'); })()}${cell(e.odds?.away)}
           </div>`;
         }).join('')

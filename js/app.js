@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v47';
+  const APP_VERSION = 'v48';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -2337,7 +2337,7 @@
      Analyse — page statistique complète
      ======================================================================== */
   const AN_TABS = [
-    ['overview', 'Vue d\'ensemble'], ['sport', 'Sport'], ['competition', 'Compétition'],
+    ['overview', 'Vue d\'ensemble'], ['clv', 'CLV'], ['sport', 'Sport'], ['competition', 'Compétition'],
     ['bookmaker', 'Bookmaker'], ['type', 'Type & Tipster'], ['period', 'Période'],
     ['discipline', 'Discipline'], ['calendar', 'Calendrier'], ['ai', 'Bilan IA']
   ];
@@ -2361,7 +2361,7 @@
     if (!a.general.count) { c.innerHTML = '<div class="empty-state"><p>Ajoutez des paris pour voir vos statistiques ici.</p></div>'; return; }
 
     ({
-      overview: renderAnOverview, sport: renderAnSport, competition: renderAnCompetition,
+      overview: renderAnOverview, clv: renderAnClv, sport: renderAnSport, competition: renderAnCompetition,
       bookmaker: renderAnBookmaker, type: renderAnType, period: renderAnPeriod,
       discipline: renderAnDiscipline, calendar: renderAnCalendar, ai: renderAnAI
     })[anState.tab](c, a);
@@ -2514,6 +2514,63 @@
       </div>`;
     $('#calPrev').addEventListener('click', () => { anState.cal = new Date(y, m - 1, 1); renderAnalytics(); });
     $('#calNext').addEventListener('click', () => { anState.cal = new Date(y, m + 1, 1); renderAnalytics(); });
+  }
+
+  /* ---- Onglet CLV : la boussole (battre la cote de clôture) ---- */
+  function renderAnClv(c) {
+    const picks = (state.picks || []).filter((p) => typeof p.clv === 'number');
+    if (picks.length < 1) {
+      c.innerHTML = `<div class="empty-state">
+        <p><strong>Pas encore de CLV mesurée.</strong> La CLV (Closing Line Value) compare la cote que tu as prise à la cote de clôture du marché — elle se calcule automatiquement au coup d'envoi de chaque pick du Radar (source coteur).</p>
+        <p class="empty-hint">Suis des picks du Radar et reviens ici après leurs coups d'envoi. Une CLV moyenne <strong>positive</strong> = tu bats le marché, le meilleur indicateur d'un edge réel — avant même les résultats.</p></div>`;
+      return;
+    }
+    const clvs = picks.map((p) => p.clv);
+    const n = clvs.length;
+    const r1 = (x) => Math.round(x * 10) / 10;
+    const avg = r1(clvs.reduce((a, b) => a + b, 0) / n);
+    const posPct = Math.round(clvs.filter((v) => v > 0).length / n * 100);
+    const sorted = [...clvs].sort((a, b) => a - b);
+    const median = r1(sorted[Math.floor(n / 2)]);
+    const cls = (x) => (x > 0.001 ? 'pos' : x < -0.001 ? 'neg' : '');
+    const wr = (arr) => { const s = arr.filter((p) => p.result === 'won' || p.result === 'lost'); return s.length ? Math.round(s.filter((p) => p.result === 'won').length / s.length * 100) : null; };
+    const wrPos = wr(picks.filter((p) => p.clv > 0)), wrNeg = wr(picks.filter((p) => p.clv <= 0));
+    const edge = avg > 0 && posPct >= 50;
+
+    const bySport = {};
+    picks.forEach((p) => { const s = p.sport || 'Autre'; (bySport[s] = bySport[s] || []).push(p.clv); });
+    const sportRows = Object.entries(bySport).map(([s, arr]) => ({ name: s, n: arr.length, avg: r1(arr.reduce((a, b) => a + b, 0) / arr.length), pos: Math.round(arr.filter((v) => v > 0).length / arr.length * 100) })).sort((a, b) => b.n - a.n);
+
+    const buckets = [['≤ −5 %', (v) => v <= -5], ['−5 à −2', (v) => v > -5 && v <= -2], ['−2 à 0', (v) => v > -2 && v < 0], ['0 à +2', (v) => v >= 0 && v < 2], ['+2 à +5', (v) => v >= 2 && v < 5], ['≥ +5 %', (v) => v >= 5]];
+    const dist = buckets.map(([, f]) => clvs.filter(f).length);
+
+    c.innerHTML = `
+      <div class="market-note" style="border-left-color:${edge ? 'var(--accent)' : 'var(--amber)'}">
+        ${edge
+        ? `<strong>Signal d'edge réel.</strong> CLV moyenne positive (+${avg} %) et ${posPct} % de tes picks battent la clôture. Sur la durée, c'est le meilleur prédicteur de rentabilité — continue ainsi.`
+        : `CLV moyenne de ${avg >= 0 ? '+' : ''}${avg} % sur ${n} picks. Pour battre le marché durablement, vise une CLV moyenne positive et plus de 50 % de picks à CLV positive.`}
+      </div>
+      <div class="kpi-grid" style="margin-bottom:16px">
+        ${kpiCard('CLV moyenne', (avg >= 0 ? '+' : '') + avg + ' %', cls(avg), `sur ${n} picks mesurés`)}
+        ${kpiCard('Picks CLV positive', posPct + ' %', posPct >= 50 ? 'pos' : 'neg', 'battent la cote de clôture')}
+        ${kpiCard('CLV médiane', (median >= 0 ? '+' : '') + median + ' %', cls(median), 'moitié au-dessus / en dessous')}
+        ${kpiCard('Réussite CLV+ / CLV−', (wrPos != null ? wrPos + '%' : '—') + ' / ' + (wrNeg != null ? wrNeg + '%' : '—'), '', 'taux de gain selon la CLV')}
+      </div>
+      <div class="panel-row">
+        <div class="panel"><div class="panel-head"><h2>Distribution de la CLV</h2></div><div class="chart-wrap sm"><canvas id="an_clvDist"></canvas></div></div>
+        <div class="panel"><div class="panel-head"><h2>CLV par sport</h2></div>
+          <div class="col-headers" style="grid-template-columns:1fr 56px 88px 84px"><span>Sport</span><span class="r">Picks</span><span class="r">CLV moy.</span><span class="r">% pos.</span></div>
+          ${sportRows.map((r) => `<div class="bet-row" style="grid-template-columns:1fr 56px 88px 84px"><div class="bet-main"><div class="bet-event">${escapeHTML(r.name)}</div></div><div class="bet-num r">${r.n}</div><div class="bet-num r ${cls(r.avg)}">${r.avg >= 0 ? '+' : ''}${r.avg} %</div><div class="bet-num r">${r.pos} %</div></div>`).join('')}
+        </div>
+      </div>
+      <p class="calib-note"><strong>Pourquoi la CLV est ta vraie boussole ?</strong> Battre la cote de clôture veut dire que tu as parié à un meilleur prix que le marché final. C'est mathématiquement corrélé au profit long terme, même quand un pari isolé perd. Un bon parieur se juge d'abord à sa CLV, pas à ses résultats de court terme.</p>`;
+
+    const colors = dist.map((_, i) => (i < 3 ? 'rgba(240,101,95,0.78)' : 'rgba(52,211,153,0.82)'));
+    state.charts['an_clvDist'] = new Chart($('#an_clvDist'), {
+      type: 'bar',
+      data: { labels: buckets.map((b) => b[0]), datasets: [{ data: dist, backgroundColor: colors, borderRadius: 5, maxBarThickness: 46 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1d212a', borderColor: '#2e3340', borderWidth: 1, padding: 9, displayColors: false, callbacks: { label: (i) => `${i.parsed.y} pick${i.parsed.y > 1 ? 's' : ''}` } } }, scales: { x: { grid: { display: false }, ticks: { color: chartDefaults.color, font: chartDefaults.font }, border: { color: chartDefaults.borderColor } }, y: { grid: { color: 'rgba(34,38,47,0.6)' }, ticks: { color: chartDefaults.color, font: chartDefaults.font, precision: 0 }, border: { display: false } } } }
+    });
   }
 
   async function renderAnAI(c, a) {

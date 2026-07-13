@@ -11,6 +11,39 @@ const Analytics = (() => {
   const profit = Stats.profit;
   const isCounted = Stats.isCounted;
 
+  /** Nom de compétition canonique : fusionne les variantes (année, tour, parenthèses,
+      « TRJ », préfixes de source) pour éviter les doublons dans l'analyse. */
+  function canonComp(raw) {
+    let s = String(raw || '').trim();
+    if (!s) return 'Autre';
+    s = s
+      .replace(/\bTRJ\s*:?\s*%?/gi, ' ')                                   // "TRJ: %"
+      .replace(/\([^)]*\)/g, ' ')                                          // "(EFG Swiss Open)"
+      .replace(/\b20\d{2}(?:[/-]\d{2,4})?\b/g, ' ')                        // "2026", "2026/27"
+      .replace(/\b(round of \d+|1\/\d+(?:e|es)?|8es?|16es?|32es?|quarts?|demi[- ]?finales?|finales?|qualifications?|qualif\.?|barrages?|phase de groupes?|groupe [a-h]|poules?|\d+\s*(?:er|e|ème|eme)?\s+tour|tour\s+\d+|matchs?\s+(?:retour|aller)|aller|retour)\b/gi, ' ')
+      .replace(/[\s,;:–—-]+$/g, '')                                        // ponctuation de fin
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    const n = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const ALIAS = [
+      [/wimbledon/, 'Wimbledon'],
+      [/roland[- ]?garros|french open/, 'Roland-Garros'],
+      [/\bus open\b/, 'US Open'],
+      [/australian open|open d.?australie/, "Open d'Australie"],
+      [/gstaad|efg swiss open/, 'ATP Gstaad'],
+      [/umag|plava laguna/, 'ATP Umag'],
+      [/ath[eè]nes|athens/, 'WTA Athènes'],
+      [/ligue des champions|champions league|\bldc\b|uefa.*qualif/, 'Ligue des Champions'],
+      [/ligue europa|europa league/, 'Ligue Europa'],
+      [/coupe du monde|world cup|\bfifa\b|\bcdm\b/, 'Coupe du Monde'],
+      [/ligue des nations|nations league/, 'Ligue des Nations'],
+      [/tour de france/, 'Tour de France']
+    ];
+    for (const [re, name] of ALIAS) if (re.test(n)) return name;
+    if (!s) return 'Autre';
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
   /** Bloc de stats pour un ensemble de paris. */
   function block(bets) {
     const counted = bets.filter(isCounted);
@@ -153,9 +186,9 @@ const Analytics = (() => {
         { name: 'Annulé', value: general.void, color: '#8a92a6' },
         { name: 'En attente', value: general.pending, color: '#e8b45a' }
       ].filter((d) => d.value > 0),
-      bySport: groupBy(settled, (b) => b.sport, (name, set) => ({ byLeague: groupBy(set, (b) => b.competition || 'Autre') })),
+      bySport: groupBy(settled, (b) => b.sport, (name, set) => ({ byLeague: groupBy(set, (b) => canonComp(b.competition)) })),
       byBookmaker: groupBy(settled, (b) => b.bookmaker),
-      byCompetition: groupBy(settled, (b) => b.competition || 'Autre', (name, set) => ({ sport: set[0]?.sport })),
+      byCompetition: groupBy(settled, (b) => canonComp(b.competition), (name, set) => ({ sport: set[0]?.sport })),
       byType: groupBy(settled, (b) => ({ simple: 'Simple', combine: 'Combiné', systeme: 'Système' }[b.betType] || b.betType)),
       byTipster: groupBy(settled.filter((b) => b.tipster), (b) => b.tipster),
       byStakeRange: byRange(settled, STAKE_RANGES, 'stake'),

@@ -73,12 +73,18 @@ const Facts = (() => {
 
   const scoreOf = (s) => (s == null ? null : (typeof s === 'object' ? (s.total ?? s.points ?? s.score ?? null) : s));
 
+  // Plan gratuit api-sports : le paramètre "last"/"next" est INTERDIT. On requête
+  // par saison (année en cours + précédente pour couvrir tous les calendriers) puis on trie.
+  const SEASONS = () => { const Y = new Date().getFullYear(); return [Y, Y - 1]; };
+
   /* ---------- Football (v3) : forme + xG + H2H + classement ---------- */
   const FIN = new Set(['FT', 'AET', 'PEN']);
   async function recentFormFB(teamId, key, n = 6) {
-    const res = await call(`fixtures?team=${teamId}&last=${n}`, key, 'football');
-    if (!res || !res.length) return null;
-    const fins = res.filter((fx) => FIN.has(fx.fixture.status.short)).reverse();
+    const chunks = await Promise.all(SEASONS().map((y) => call(`fixtures?team=${teamId}&season=${y}`, key, 'football')));
+    const res = chunks.filter(Array.isArray).flat();
+    if (!res.length) return null;
+    const fins = res.filter((fx) => fx.fixture && FIN.has(fx.fixture.status.short))
+      .sort((a, b) => new Date(b.fixture.date) - new Date(a.fixture.date)).slice(0, n);
     let w = 0, l = 0, dr = 0, gf = 0, ga = 0;
     const recent = fins.map((fx) => {
       const isHome = fx.teams.home.id === teamId;
@@ -104,16 +110,10 @@ const Facts = (() => {
       if (f != null && a != null) { sf += f; sa += a; cnt++; }
     });
     if (cnt) { xgFor = Math.round(sf / cnt * 100) / 100; xgAg = Math.round(sa / cnt * 100) / 100; }
-    return { played: recent.length, w, d: dr, l, gf, ga, streak: recent.map((x) => x.res).join(' '), recent, xgFor, xgAg };
-  }
-  async function nextFixtureLeagueFB(teamId, opponentName, key) {
-    const res = await call(`fixtures?team=${teamId}&next=5`, key, 'football');
-    if (!res || !res.length) return null;
-    const hit = res.find((fx) => { const opp = fx.teams.home.id === teamId ? fx.teams.away.name : fx.teams.home.name; return nameMatch(opponentName, opp); }) || res[0];
-    return { leagueId: hit.league.id, season: hit.league.season, leagueName: hit.league.name };
+    return { played: recent.length, w, d: dr, l, gf, ga, streak: recent.map((x) => x.res).join(' '), recent, xgFor, xgAg, _league: fins[0].league || null };
   }
   async function h2hFB(id1, id2, key) {
-    const res = await call(`fixtures/headtohead?h2h=${id1}-${id2}&last=8`, key, 'football');
+    const res = await call(`fixtures/headtohead?h2h=${id1}-${id2}`, key, 'football');
     if (!res || !res.length) return null;
     let w1 = 0, w2 = 0, dr = 0;
     res.filter((fx) => FIN.has(fx.fixture.status.short)).forEach((fx) => {
@@ -133,9 +133,11 @@ const Facts = (() => {
 
   /* ---------- Sports d'équipe (v1) : forme (buts/points) + H2H ---------- */
   async function recentFormV1(teamId, key, sport, n = 6) {
-    const res = await call(`games?team=${teamId}&last=${n}`, key, sport);
-    if (!res || !res.length) return null;
-    const games = res.filter((g) => scoreOf(g.scores && g.scores.home) != null && scoreOf(g.scores && g.scores.away) != null).reverse();
+    const chunks = await Promise.all(SEASONS().map((y) => call(`games?team=${teamId}&season=${y}`, key, sport)));
+    const res = chunks.filter(Array.isArray).flat();
+    if (!res.length) return null;
+    const games = res.filter((g) => scoreOf(g.scores && g.scores.home) != null && scoreOf(g.scores && g.scores.away) != null)
+      .sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, n);
     let w = 0, l = 0, dr = 0, gf = 0, ga = 0;
     const recent = games.map((g) => {
       const isHome = g.teams.home.id === teamId;
@@ -150,7 +152,7 @@ const Facts = (() => {
     return { played: recent.length, w, d: dr, l, gf, ga, streak: recent.map((x) => x.res).join(' '), recent, xgFor: null, xgAg: null };
   }
   async function h2hV1(id1, id2, key, sport) {
-    const res = await call(`games?h2h=${id1}-${id2}&last=8`, key, sport);
+    const res = await call(`games?h2h=${id1}-${id2}`, key, sport);
     if (!res || !res.length) return null;
     let w1 = 0, w2 = 0, dr = 0;
     res.forEach((g) => {
@@ -174,18 +176,18 @@ const Facts = (() => {
 
       let hForm = null, aForm = null, duel = null, hStand = null, aStand = null, league = null;
       if (sk === 'football') {
-        let lg = null;
-        [hForm, aForm, lg] = await Promise.all([
+        [hForm, aForm] = await Promise.all([
           ht ? recentFormFB(ht.id, apiKey) : null,
-          at ? recentFormFB(at.id, apiKey) : null,
-          (ht && at) ? nextFixtureLeagueFB(ht.id, away, apiKey) : null
+          at ? recentFormFB(at.id, apiKey) : null
         ]);
+        // Ligue = celle de la rencontre la plus récente (issue de la forme)
+        const lg = (hForm && hForm._league) || (aForm && aForm._league) || null;
         const jobs = [];
         if (ht && at) jobs.push(h2hFB(ht.id, at.id, apiKey).then((d) => { duel = d; }));
-        if (lg && ht) jobs.push(standingFB(lg.leagueId, lg.season, ht.id, apiKey).then((d) => { hStand = d; }));
-        if (lg && at) jobs.push(standingFB(lg.leagueId, lg.season, at.id, apiKey).then((d) => { aStand = d; }));
+        if (lg && lg.id && ht) jobs.push(standingFB(lg.id, lg.season, ht.id, apiKey).then((d) => { hStand = d; }));
+        if (lg && lg.id && at) jobs.push(standingFB(lg.id, lg.season, at.id, apiKey).then((d) => { aStand = d; }));
         await Promise.all(jobs);
-        league = lg ? lg.leagueName : null;
+        league = lg ? lg.name : null;
       } else {
         [hForm, aForm] = await Promise.all([
           ht ? recentFormV1(ht.id, apiKey, sk) : null,

@@ -9,23 +9,30 @@
    ========================================================================== */
 'use strict';
 
-const ATP = (y) => `https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_matches_${y}.csv`;
-const WTA = (y) => `https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_matches_${y}.csv`;
+// raw.githubusercontent est rate-limité (404) depuis les IP datacenter → on passe par
+// le CDN jsDelivr qui miroite GitHub, avec repli sur raw.
+const ATP = (y) => [`https://cdn.jsdelivr.net/gh/JeffSackmann/tennis_atp@master/atp_matches_${y}.csv`, `https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_matches_${y}.csv`];
+const WTA = (y) => [`https://cdn.jsdelivr.net/gh/JeffSackmann/tennis_wta@master/wta_matches_${y}.csv`, `https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_matches_${y}.csv`];
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 
 const DBG = [];
-async function fetchCsv(url) {
+async function fetchOne(url) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 8000);
   try {
-    const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 8500);
     const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'BetSmartAI/1.0', 'Accept': 'text/plain,*/*' } });
     clearTimeout(to);
-    if (!r.ok) { DBG.push(`${url.slice(-20)}:HTTP${r.status}`); return null; }
+    if (!r.ok) { DBG.push(`${url.slice(-24)}:HTTP${r.status}`); return null; }
     const t = await r.text();
-    DBG.push(`${url.slice(-20)}:${t.length}b`);
+    if (!t || t.length < 100) { DBG.push(`${url.slice(-24)}:empty`); return null; }
+    DBG.push(`${url.slice(-24)}:${t.length}b`);
     return t;
-  } catch (e) { DBG.push(`${url.slice(-20)}:ERR ${String((e && e.message) || e).slice(0, 40)}`); return null; }
+  } catch (e) { clearTimeout(to); DBG.push(`${url.slice(-24)}:ERR`); return null; }
+}
+async function fetchCsv(urls) {
+  for (const u of urls) { const t = await fetchOne(u); if (t) return t; }
+  return null;
 }
 
 function surfKey(s) {

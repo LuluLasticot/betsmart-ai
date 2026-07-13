@@ -13,7 +13,7 @@
 
 const BASE = 'https://v3.football.api-sports.io';
 // Endpoints autorisés (préfixes) — pas de SSRF ouvert
-const ALLOWED = ['teams', 'fixtures', 'standings', 'injuries', 'teams/statistics'];
+const ALLOWED = ['teams', 'fixtures', 'fixtures/statistics', 'fixtures/headtohead', 'standings', 'injuries', 'teams/statistics'];
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');

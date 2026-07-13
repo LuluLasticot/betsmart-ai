@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v40';
+  const APP_VERSION = 'v41';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1662,7 +1662,7 @@
       if (home && away && state.settings.apiFootballKey && typeof Facts !== 'undefined') {
         try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
       }
-      ctx.matchFacts = facts ? facts.text : '';
+      ctx.matchFacts = (facts && facts.text) ? facts.text : '';
 
       const r = await Advisor.analyzeMatch(state.settings.apiKey, state.settings.model, ctx, query);
       r.facts = facts; // pour l'encart « Données réelles » de l'UI
@@ -1713,11 +1713,16 @@
 
   /** Encart « Données réelles » (API-Football) affiché dans l'analyse d'un match. */
   function matchFactsHTML(facts) {
-    if (!facts) {
-      const hint = state.settings.apiFootballKey
-        ? 'Données API-Football indisponibles pour ce match (compétition non couverte) — analyse basée sur la recherche web.'
-        : 'Ajoutez votre clé API-Football dans les Réglages pour des faits réels (forme, xG, H2H). Analyse actuelle basée sur la recherche web.';
-      return `<div class="facts-box empty"><span class="facts-none">${hint} L'IA a pour consigne de ne rien inventer.</span></div>`;
+    if (!facts || facts.noData) {
+      let hint;
+      if (!state.settings.apiFootballKey) {
+        hint = 'Ajoutez votre clé API-Football dans les Réglages pour des faits réels (forme, xG, H2H).';
+      } else if (facts && facts.noData) {
+        hint = `Données API-Football indisponibles pour ce match — ${escapeHTML(facts.reason || 'raison inconnue')}.`;
+      } else {
+        hint = 'Données API-Football indisponibles pour ce match.';
+      }
+      return `<div class="facts-box empty"><span class="facts-none">${hint} Analyse basée sur la recherche web ; l'IA a pour consigne de ne rien inventer.</span></div>`;
     }
     const teamRow = (name, f, stand) => {
       if (!f) return `<div class="facts-team"><div class="facts-team-name">${escapeHTML(name)}</div><div class="facts-form-muted">forme indisponible</div></div>`;

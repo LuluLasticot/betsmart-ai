@@ -20,6 +20,23 @@ const Facts = (() => {
     return !s || s === 'football' || s === 'foot' || s === 'soccer';
   }
 
+  // Sélections nationales : coteur donne le nom FR, API-Football l'attend en anglais.
+  const COUNTRY_FR_EN = {
+    espagne: 'Spain', allemagne: 'Germany', angleterre: 'England', 'pays bas': 'Netherlands',
+    hollande: 'Netherlands', belgique: 'Belgium', italie: 'Italy', croatie: 'Croatia',
+    'bresil': 'Brazil', argentine: 'Argentina', portugal: 'Portugal', maroc: 'Morocco',
+    suisse: 'Switzerland', 'etats unis': 'USA', danemark: 'Denmark', suede: 'Sweden',
+    norvege: 'Norway', pologne: 'Poland', 'republique tcheque': 'Czech-Republic',
+    autriche: 'Austria', turquie: 'Turkey', grece: 'Greece', ecosse: 'Scotland',
+    'pays de galles': 'Wales', irlande: 'Ireland', serbie: 'Serbia', 'coree du sud': 'South-Korea',
+    japon: 'Japan', mexique: 'Mexico', uruguay: 'Uruguay', colombie: 'Colombia',
+    'cote d ivoire': 'Ivory-Coast', senegal: 'Senegal', nigeria: 'Nigeria', 'egypte': 'Egypt',
+    tunisie: 'Tunisia', algerie: 'Algeria', cameroun: 'Cameroon', ghana: 'Ghana', france: 'France'
+  };
+  const enName = (name) => COUNTRY_FR_EN[norm(name)] || name;
+
+  let lastError = null;
+
   async function call(ep, key) {
     const ck = ep;
     const c = cache.get(ck);
@@ -27,19 +44,25 @@ const Facts = (() => {
     try {
       const r = await fetch(`/api/facts?ep=${encodeURIComponent(ep)}&key=${encodeURIComponent(key)}`);
       const j = await r.json();
+      if (j && !j.ok && j.error) lastError = j.error;
       const data = j && j.ok ? j.response : null;
       cache.set(ck, { at: Date.now(), data });
       return data;
-    } catch (_) { return null; }
+    } catch (e) { lastError = String((e && e.message) || e); return null; }
   }
 
   async function findTeam(name, key) {
-    const res = await call(`teams?search=${encodeURIComponent(name)}`, key);
-    if (!res || !res.length) return null;
-    const teams = res.map((x) => x.team).filter(Boolean);
-    const exact = teams.find((t) => nameMatch(name, t.name));
-    const t = exact || teams[0];
-    return t ? { id: t.id, name: t.name } : null;
+    // Essaie le nom tel quel, puis la traduction anglaise (sélections nationales)
+    for (const q of [name, enName(name)].filter((v, i, a) => v && a.indexOf(v) === i)) {
+      const res = await call(`teams?search=${encodeURIComponent(q)}`, key);
+      if (res && res.length) {
+        const teams = res.map((x) => x.team).filter(Boolean);
+        const exact = teams.find((t) => nameMatch(q, t.name));
+        const t = exact || teams[0];
+        if (t) return { id: t.id, name: t.name };
+      }
+    }
+    return null;
   }
 
   const FIN = new Set(['FT', 'AET', 'PEN']);
@@ -127,9 +150,10 @@ const Facts = (() => {
   /** Faits complets d'un match + bloc texte pour le prompt. */
   async function matchFacts({ home, away, sport, apiKey }) {
     if (!apiKey || !home || !away || !isFootball(sport)) return null;
+    lastError = null;
     try {
       const [ht, at] = await Promise.all([findTeam(home, apiKey), findTeam(away, apiKey)]);
-      if (!ht && !at) return null;
+      if (!ht && !at) return { noData: true, reason: lastError || 'équipes introuvables dans API-Football' };
 
       const [hForm, aForm, lg] = await Promise.all([
         ht ? recentForm(ht.id, apiKey) : null,
@@ -150,10 +174,12 @@ const Facts = (() => {
         homeStanding: hStand, awayStanding: aStand,
         league: lg ? lg.leagueName : null, source: 'api-football'
       };
-      if (!(hForm || aForm || duel || hStand || aStand)) return null;
+      if (!(hForm || aForm || duel || hStand || aStand)) {
+        return { noData: true, reason: lastError || `aucune donnée récente (équipes trouvées : ${facts.homeName} / ${facts.awayName})` };
+      }
       facts.text = formatText(facts);
       return facts;
-    } catch (_) { return null; }
+    } catch (e) { return { noData: true, reason: String((e && e.message) || e) }; }
   }
 
   function fmtForm(name, f, stand) {

@@ -965,6 +965,9 @@ kbd {
 .form-pill.w { background: var(--accent); }
 .form-pill.l { background: var(--red); color: #fff; }
 .form-pill.d { background: var(--surface-3); color: var(--text-2); }
+.facts-xg { margin-top: 5px; font-size: 12px; color: var(--text-2); }
+.facts-xg strong { color: var(--accent); font-family: var(--mono); }
+.facts-xg-sub { font-size: 10.5px; color: var(--text-3); }
 .facts-h2h { margin-top: 10px; font-size: 12px; color: var(--text-2); }
 @media (max-width: 600px) { .facts-teams { grid-template-columns: 1fr; } }
 

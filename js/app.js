@@ -12,7 +12,7 @@
     bets: [],
     txs: [],
     picks: [],
-    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25 },
+    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25 },
     period: 'all',
     view: 'dashboard',
     charts: {},
@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v39';
+  const APP_VERSION = 'v40';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1659,8 +1659,8 @@
       const parts = query.split(/\s+[–—-]\s+|\s+vs\.?\s+/i);
       const home = (parts[0] || '').trim(), away = (parts[1] || '').trim();
       let facts = null;
-      if (home && away && typeof Sofa !== 'undefined') {
-        try { facts = await Sofa.matchFacts({ home, away, sport: lastAnalyzeSport, date: null }); } catch (_) {}
+      if (home && away && state.settings.apiFootballKey && typeof Facts !== 'undefined') {
+        try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
       }
       ctx.matchFacts = facts ? facts.text : '';
 
@@ -1711,24 +1711,30 @@
     }).join('');
   }
 
-  /** Encart « Données réelles » (SofaScore) affiché dans l'analyse d'un match. */
+  /** Encart « Données réelles » (API-Football) affiché dans l'analyse d'un match. */
   function matchFactsHTML(facts) {
     if (!facts) {
-      return `<div class="facts-box empty"><span class="facts-none">Données SofaScore indisponibles pour ce match — analyse basée sur la recherche web. L'IA a pour consigne de ne rien inventer.</span></div>`;
+      const hint = state.settings.apiFootballKey
+        ? 'Données API-Football indisponibles pour ce match (compétition non couverte) — analyse basée sur la recherche web.'
+        : 'Ajoutez votre clé API-Football dans les Réglages pour des faits réels (forme, xG, H2H). Analyse actuelle basée sur la recherche web.';
+      return `<div class="facts-box empty"><span class="facts-none">${hint} L'IA a pour consigne de ne rien inventer.</span></div>`;
     }
     const teamRow = (name, f, stand) => {
       if (!f) return `<div class="facts-team"><div class="facts-team-name">${escapeHTML(name)}</div><div class="facts-form-muted">forme indisponible</div></div>`;
       const pos = stand ? `<span class="facts-standing">${stand.position}ᵉ · ${stand.points} pts</span>` : '';
+      const xg = (f.xgFor != null)
+        ? `<div class="facts-xg">xG <strong>${f.xgFor}</strong> pour · <strong>${f.xgAg}</strong> contre <span class="facts-xg-sub">(3 derniers)</span></div>` : '';
       return `<div class="facts-team">
         <div class="facts-team-name">${escapeHTML(name)} ${pos}</div>
         <div class="facts-form">${formPills(f.streak)}<span class="facts-goals">${f.gf} bp / ${f.ga} bc</span></div>
+        ${xg}
       </div>`;
     };
-    const h2h = facts.h2h
-      ? `<div class="facts-h2h">Face-à-face : <strong>${facts.h2h.homeWins}</strong> V ${escapeHTML(facts.homeName)} · <strong>${facts.h2h.draws}</strong> nuls · <strong>${facts.h2h.awayWins}</strong> V ${escapeHTML(facts.awayName)}</div>`
+    const h2h = (facts.h2h && facts.h2h.n)
+      ? `<div class="facts-h2h">Face-à-face (${facts.h2h.n}) : <strong>${facts.h2h.t1Wins}</strong> V ${escapeHTML(facts.homeName)} · <strong>${facts.h2h.draws}</strong> nuls · <strong>${facts.h2h.t2Wins}</strong> V ${escapeHTML(facts.awayName)}</div>`
       : '';
     return `<div class="facts-box">
-      <div class="facts-head">Données réelles · <span>SofaScore</span></div>
+      <div class="facts-head">Données réelles · <span>API-Football</span>${facts.league ? ' · ' + escapeHTML(facts.league) : ''}</div>
       <div class="facts-teams">${teamRow(facts.homeName, facts.homeForm, facts.homeStanding)}${teamRow(facts.awayName, facts.awayForm, facts.awayStanding)}</div>
       ${h2h}
     </div>`;
@@ -2110,6 +2116,12 @@
       toast('Clé API enregistrée');
     });
 
+    $('#setApiFootballKey').addEventListener('change', async () => {
+      state.settings.apiFootballKey = $('#setApiFootballKey').value.trim();
+      await DB.setSetting('apiFootballKey', state.settings.apiFootballKey);
+      toast(state.settings.apiFootballKey ? 'Clé API-Football enregistrée — faits réels activés ✓' : 'Clé API-Football retirée');
+    });
+
     $('#setOddsKey').addEventListener('change', async () => {
       state.settings.oddsApiKey = $('#setOddsKey').value.trim();
       await DB.setSetting('oddsApiKey', state.settings.oddsApiKey);
@@ -2211,6 +2223,7 @@
 
   function bindSettingsValues() {
     $('#setApiKey').value = state.settings.apiKey;
+    $('#setApiFootballKey').value = state.settings.apiFootballKey || '';
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;

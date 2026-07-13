@@ -418,6 +418,11 @@
             <p class="field-hint">Stockée uniquement sur cet appareil. Obtenez une clé gratuite sur <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.</p>
           </div>
           <div class="field">
+            <label for="setApiFootballKey">Clé API-Football <span class="opt">optionnel — faits réels + xG</span></label>
+            <input type="password" id="setApiFootballKey" class="input" placeholder="Clé API-Football" autocomplete="off">
+            <p class="field-hint">Fournit au Radar la forme récente, le xG, le H2H et le classement (au lieu de deviner). Clé gratuite (100 requêtes/jour) sur <a href="https://dashboard.api-football.com/register" target="_blank" rel="noopener">dashboard.api-football.com</a>.</p>
+          </div>
+          <div class="field">
             <label for="setModel">Modèle</label>
             <select id="setModel" class="select full">
               <option value="gemini-2.5-flash">Gemini 2.5 Flash (recommandé)</option>
@@ -748,7 +753,7 @@
   <script src="js/live.js"></script>
   <script src="js/odds.js"></script>
   <script src="js/coteur.js"></script>
-  <script src="js/sofascore.js"></script>
+  <script src="js/facts.js"></script>
   <script src="js/advisor.js"></script>
   <script src="js/app.js"></script>
 </body>

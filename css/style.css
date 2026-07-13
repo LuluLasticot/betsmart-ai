@@ -924,8 +924,25 @@ kbd {
 }
 .market-row:last-child { border-bottom: 0; }
 .market-row .avis { font-size: 12px; color: var(--text-3); }
+.avis-text { margin-bottom: 6px; }
 .market-val { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; line-height: 1.15; }
 .market-stake { font-size: 10.5px; font-weight: 500; color: var(--text-3); white-space: nowrap; }
+
+/* Saisie manuelle de sa propre cote sur un marché */
+.mycote-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.mycote-lbl { font-size: 11px; color: var(--text-3); }
+.mycote-input {
+  width: 66px; padding: 3px 7px; border-radius: 6px;
+  background: var(--surface-3); border: 1px solid var(--border);
+  color: var(--text-1); font: 600 12px var(--mono);
+}
+.mycote-input:focus { outline: none; border-color: var(--accent); }
+.mycote-res { font-size: 11.5px; color: var(--text-3); }
+.mycote-res.pos { color: var(--accent); }
+.mycote-res.neg { color: var(--red); }
+.mycote-res.zero { color: var(--text-2); }
+.mycote-res strong { font-family: var(--mono); }
+.mycote-bet { margin-left: auto; }
 .market-unverified { font-size: 11px; color: var(--text-3); font-style: italic; }
 .stake-profile-bar {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
@@ -972,8 +989,11 @@ kbd {
 @media (max-width: 600px) { .facts-teams { grid-template-columns: 1fr; } }
 
 @media (max-width: 600px) {
-  .market-row { grid-template-columns: minmax(0, 1fr) 60px 80px; }
-  .market-row .avis, .market-row .hide-m { display: none; }
+  .market-row { grid-template-columns: minmax(0, 1fr) 56px 66px; }
+  .market-row .hide-m { display: none; }
+  .market-row .avis { grid-column: 1 / -1; }
+  .market-row .avis-text { display: none; }
+  .mycote-bet { margin-left: 0; }
   .match-analyze-row { flex-direction: column; }
 }
 

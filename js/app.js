@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v41';
+  const APP_VERSION = 'v42';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1795,7 +1795,15 @@
                   <span class="market-stake">${stake > 0 ? 'mise ' + Stats.fmtMoney(stake) : '—'}</span>
                 </div>`
               : `<div class="bet-profit market-val zero"><span class="market-unverified">non vérifiée</span></div>`}
-            <div class="avis">${escapeHTML(m.avis || '')}${playable ? ` · <button class="link-btn" data-add-market="${i}">parier${stake > 0 ? ' ' + Stats.fmtMoney(stake) : ''}</button>` : ''}</div>
+            <div class="avis">
+              <div class="avis-text">${escapeHTML(m.avis || '')}</div>
+              <div class="mycote-row">
+                <span class="mycote-lbl">Ta cote</span>
+                <input type="number" class="mycote-input" data-idx="${i}" min="1.01" step="0.01" placeholder="${Number(m.cote).toFixed(2)}" inputmode="decimal">
+                <span class="mycote-res" data-idx="${i}"></span>
+                <button class="link-btn mycote-bet" data-idx="${i}">parier${stake > 0 ? ' ' + Stats.fmtMoney(stake) : ''}</button>
+              </div>
+            </div>
           </div>`;
         }).join('')}
       </div>
@@ -1812,13 +1820,38 @@
       });
     }
 
-    container.querySelectorAll('[data-add-market]').forEach((btn) => {
+    // Saisie manuelle de TA cote sur chaque marché → recalcul value + mise Kelly en direct
+    const baseStake = (m) => (m.cote_verifiee !== false ? Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake : 0);
+    container.querySelectorAll('.mycote-input').forEach((inp) => {
+      const idx = Number(inp.dataset.idx);
+      const m = r.marches[idx];
+      const res = container.querySelector(`.mycote-res[data-idx="${idx}"]`);
+      const betBtn = container.querySelector(`.mycote-bet[data-idx="${idx}"]`);
+      inp.addEventListener('input', () => {
+        const c = parseFloat(inp.value);
+        if (!(c > 1)) {
+          m.myCote = null; res.textContent = ''; res.className = 'mycote-res';
+          const bs = baseStake(m);
+          betBtn.textContent = `parier${bs > 0 ? ' ' + Stats.fmtMoney(bs) : ''}`;
+          return;
+        }
+        m.myCote = c;
+        const vp = (m.probabilite * c - 1) * 100;
+        const st = Advisor.stakeFor(k.bankroll, { ...m, cote: c, cote_verifiee: true }, profileKey, mode).stake;
+        res.className = `mycote-res ${vp >= 2 ? 'pos' : vp >= 0 ? 'zero' : 'neg'}`;
+        res.innerHTML = `value <strong>${vp >= 0 ? '+' : ''}${vp.toFixed(1)} %</strong> · mise <strong>${st > 0 ? Stats.fmtMoney(st) : '0 €'}</strong>`;
+        betBtn.textContent = `parier${st > 0 ? ' ' + Stats.fmtMoney(st) : ''}`;
+      });
+    });
+
+    container.querySelectorAll('.mycote-bet').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const m = r.marches[Number(btn.dataset.addMarket)];
-        const stake = Advisor.stakeFor(k.bankroll, m, profileKey, state.settings.stakingMode || 'kelly').stake;
+        const m = r.marches[Number(btn.dataset.idx)];
+        const cote = m.myCote || m.cote;
+        const stake = Advisor.stakeFor(k.bankroll, { ...m, cote, cote_verifiee: true }, profileKey, mode).stake;
         prefillBetFromPick({
-          date_match: r.date_match, bookmaker: m.bookmaker, sport: r.sport,
-          competition: r.competition, match: r.match, selection: m.selection, cote: m.cote
+          date_match: r.date_match, bookmaker: m.myCote ? '' : m.bookmaker, sport: r.sport,
+          competition: r.competition, match: r.match, selection: m.selection, cote
         }, stake);
       });
     });

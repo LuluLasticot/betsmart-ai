@@ -9,10 +9,16 @@
    ========================================================================== */
 'use strict';
 
-// raw.githubusercontent est rate-limité (404) depuis les IP datacenter → on passe par
-// le CDN jsDelivr qui miroite GitHub, avec repli sur raw.
-const ATP = (y) => [`https://cdn.jsdelivr.net/gh/JeffSackmann/tennis_atp@master/atp_matches_${y}.csv`, `https://raw.githubusercontent.com/JeffSackmann/tennis_atp/master/atp_matches_${y}.csv`];
-const WTA = (y) => [`https://cdn.jsdelivr.net/gh/JeffSackmann/tennis_wta@master/wta_matches_${y}.csv`, `https://raw.githubusercontent.com/JeffSackmann/tennis_wta/master/wta_matches_${y}.csv`];
+// raw.githubusercontent est rate-limité (404) depuis les IP datacenter → on essaie
+// plusieurs miroirs CDN de GitHub dans l'ordre.
+const mirrors = (repo, file) => [
+  `https://cdn.jsdelivr.net/gh/JeffSackmann/${repo}@master/${file}`,
+  `https://cdn.statically.io/gh/JeffSackmann/${repo}/master/${file}`,
+  `https://raw.githack.com/JeffSackmann/${repo}/master/${file}`,
+  `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`
+];
+const ATP = (y) => mirrors('tennis_atp', `atp_matches_${y}.csv`);
+const WTA = (y) => mirrors('tennis_wta', `wta_matches_${y}.csv`);
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 
@@ -23,12 +29,13 @@ async function fetchOne(url) {
   try {
     const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'BetSmartAI/1.0', 'Accept': 'text/plain,*/*' } });
     clearTimeout(to);
-    if (!r.ok) { DBG.push(`${url.slice(-24)}:HTTP${r.status}`); return null; }
+    const host = (url.split('/')[2] || '').split('.').slice(-2).join('.');
+    if (!r.ok) { DBG.push(`${host}:HTTP${r.status}`); return null; }
     const t = await r.text();
-    if (!t || t.length < 100) { DBG.push(`${url.slice(-24)}:empty`); return null; }
-    DBG.push(`${url.slice(-24)}:${t.length}b`);
+    if (!t || t.length < 100) { DBG.push(`${host}:empty`); return null; }
+    DBG.push(`${host}:${t.length}b`);
     return t;
-  } catch (e) { clearTimeout(to); DBG.push(`${url.slice(-24)}:ERR`); return null; }
+  } catch (e) { clearTimeout(to); DBG.push(`err:${String((e && e.message) || e).slice(0, 30)}`); return null; }
 }
 async function fetchCsv(urls) {
   for (const u of urls) { const t = await fetchOne(u); if (t) return t; }

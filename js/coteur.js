@@ -296,6 +296,10 @@ const Coteur = (() => {
       return { typename: half ? 'HTOU' : 'OU', special: encodeThreshold(thr), keys: [over ? '3' : '2'] };
     }
 
+    // Handicap : l'encodage coteur (spécial signé, lignes multiples) est trop ambigu
+    // pour un mapping fiable → on NE remplace PAS la cote (elle restera « non vérifiée »).
+    if (/handicap|\+\d|[-−]\s?\d.*(pt|jeu|but|point)/.test(mk) || /handicap/.test(sel)) return null;
+
     // Double chance ('1'=1X domicile ou nul, '2'=X2 nul ou extérieur, '3'=12 domicile ou extérieur)
     if (/double chance/.test(mk) || (/\bou\b/.test(sel) && (hasDraw || (isHome && isAway)))) {
       if (hasDraw && isHome) return { typename: 'DC', keys: ['1'] };

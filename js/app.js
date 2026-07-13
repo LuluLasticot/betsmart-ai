@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v42';
+  const APP_VERSION = 'v43';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1689,6 +1689,10 @@
               m.cote_verifiee = true;
               m.notMyBook = true;
               m.value_pct = Math.round((m.probabilite * m.cote - 1) * 1000) / 10;
+            } else {
+              // Marché non vérifiable au prix réel (handicap, marché exotique, match introuvable)
+              // → on NE fait PAS confiance à la cote du modèle : marquée « non vérifiée » (pas de value/mise trompeuse).
+              m.cote_verifiee = false;
             }
           } catch (_) { break; } // quota : on garde les cotes estimées
         }

@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v48';
+  const APP_VERSION = 'v49';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1271,7 +1271,8 @@
       const b = ev.target.closest('.cmp-analyze');
       if (!b) return;
       $('#matchQuery').value = b.dataset.q || '';
-      lastAnalyzeSport = $('#comparatorSport').value || null; // sport connu → aide le matching SofaScore
+      lastAnalyzeSport = $('#comparatorSport').value || null; // sport connu → aide le matching des faits
+      lastAnalyzeComp = b.dataset.comp || null;               // compétition → surface (tennis)
       $('#advisorContent').scrollIntoView({ behavior: 'smooth', block: 'center' });
       runMatchAnalysis();
     });
@@ -1303,7 +1304,7 @@
             <div class="bet-main">
               <div class="bet-event">${escapeHTML(e.teamA)} – ${escapeHTML(e.teamB)}</div>
               <div class="bet-meta">${escapeHTML(e.league)} · ${dateTxt}</div>
-              <button class="cmp-analyze" data-q="${escapeHTML(e.teamA + ' – ' + e.teamB)}">◎ Analyser par le Radar</button>
+              <button class="cmp-analyze" data-q="${escapeHTML(e.teamA + ' – ' + e.teamB)}" data-comp="${escapeHTML(e.league || '')}">◎ Analyser par le Radar</button>
             </div>
             ${cell(e.odds?.home)}${(() => { const c = cell(e.odds?.draw); return c.replace('cmp-odd', 'cmp-odd hide-m'); })()}${cell(e.odds?.away)}
           </div>`;
@@ -1642,7 +1643,8 @@
 
   /* ---- Analyse d'un match précis ---- */
   let lastMatchAnalysis = null; // { r, ctx } — pour recalculer les mises quand on change de profil Kelly
-  let lastAnalyzeSport = null;  // sport du dernier match analysé (via comparateur) → matching SofaScore
+  let lastAnalyzeSport = null;  // sport du dernier match analysé (via comparateur) → matching des faits
+  let lastAnalyzeComp = null;   // compétition du dernier match (surface tennis)
 
   async function runMatchAnalysis() {
     const query = $('#matchQuery').value.trim();
@@ -1659,8 +1661,14 @@
       const parts = query.split(/\s+[–—-]\s+|\s+vs\.?\s+/i);
       const home = (parts[0] || '').trim(), away = (parts[1] || '').trim();
       let facts = null;
-      if (home && away && state.settings.apiFootballKey && typeof Facts !== 'undefined') {
-        try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
+      const sportN = (lastAnalyzeSport || '').toLowerCase();
+      if (home && away) {
+        if (/tennis/.test(sportN) && typeof TennisElo !== 'undefined') {
+          // Tennis → modèle Elo (Sackmann) au lieu d'api-sports (non couvert)
+          try { facts = await TennisElo.matchFacts({ home, away, competition: lastAnalyzeComp || query }); } catch (_) {}
+        } else if (state.settings.apiFootballKey && typeof Facts !== 'undefined') {
+          try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
+        }
       }
       ctx.matchFacts = (facts && facts.text) ? facts.text : '';
 
@@ -1717,6 +1725,19 @@
 
   /** Encart « Données réelles » (API-Football) affiché dans l'analyse d'un match. */
   function matchFactsHTML(facts) {
+    if (facts && facts.tennis) {
+      const bar = Math.round(facts.prob1);
+      return `<div class="facts-box">
+        <div class="facts-head">Données réelles · <span>Elo tennis</span> · surface : ${escapeHTML(facts.surface)}</div>
+        <div class="facts-teams">
+          <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p1.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p1.elo} · ${facts.p1.matches} matchs</span></div></div>
+          <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p2.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p2.elo} · ${facts.p2.matches} matchs</span></div></div>
+        </div>
+        <div class="elo-prob"><div class="elo-bar"><span style="width:${bar}%"></span></div>
+          <div class="elo-prob-labels"><strong>${facts.prob1} %</strong> ${escapeHTML(facts.p1.name)} · ${escapeHTML(facts.p2.name)} <strong>${facts.prob2} %</strong></div>
+          <span class="facts-xg-sub">probabilité modèle Elo (ancrage statistique)</span></div>
+      </div>`;
+    }
     if (!facts || facts.noData) {
       let hint;
       if (!state.settings.apiFootballKey) {

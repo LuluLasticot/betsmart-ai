@@ -25,6 +25,8 @@ const Analytics = (() => {
       .replace(/\s{2,}/g, ' ')
       .trim();
     const n = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    // Tournois du Grand Chelem : on garde les tableaux distincts (ATP / WTA / mixte)
+    const MAJORS = new Set(['Wimbledon', 'Roland-Garros', 'US Open', "Open d'Australie"]);
     const ALIAS = [
       [/wimbledon/, 'Wimbledon'],
       [/roland[- ]?garros|french open/, 'Roland-Garros'],
@@ -39,7 +41,12 @@ const Analytics = (() => {
       [/ligue des nations|nations league/, 'Ligue des Nations'],
       [/tour de france/, 'Tour de France']
     ];
-    for (const [re, name] of ALIAS) if (re.test(n)) return name;
+    // Détecte le tableau (à partir du libellé brut, avant nettoyage)
+    const rawN = String(raw || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const tour = /mixte|mixed/.test(rawN) ? ' (mixte)'
+      : /\bwta\b|\bfemmes?\b|\bdames?\b|\bwomen\b|\bf\b/.test(rawN) ? ' (WTA)'
+      : /\batp\b|\bhommes?\b|\bmessieurs\b|\bmen\b|\bh\b/.test(rawN) ? ' (ATP)' : '';
+    for (const [re, name] of ALIAS) if (re.test(n)) return MAJORS.has(name) ? name + tour : name;
     if (!s) return 'Autre';
     return s.charAt(0).toUpperCase() + s.slice(1);
   }

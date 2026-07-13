@@ -14,15 +14,18 @@ const WTA = (y) => `https://raw.githubusercontent.com/JeffSackmann/tennis_wta/ma
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 
+const DBG = [];
 async function fetchCsv(url) {
   try {
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 7000);
-    const r = await fetch(url, { signal: ctrl.signal });
+    const to = setTimeout(() => ctrl.abort(), 8500);
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'BetSmartAI/1.0', 'Accept': 'text/plain,*/*' } });
     clearTimeout(to);
-    if (!r.ok) return null;
-    return await r.text();
-  } catch (_) { return null; }
+    if (!r.ok) { DBG.push(`${url.slice(-20)}:HTTP${r.status}`); return null; }
+    const t = await r.text();
+    DBG.push(`${url.slice(-20)}:${t.length}b`);
+    return t;
+  } catch (e) { DBG.push(`${url.slice(-20)}:ERR ${String((e && e.message) || e).slice(0, 40)}`); return null; }
 }
 
 function surfKey(s) {
@@ -59,7 +62,8 @@ module.exports = async (req, res) => {
         rows.push({ w, l, s: surfKey(c[iS]), d: parseInt(c[iD], 10) || 0 });
       }
     });
-    if (!rows.length) return res.status(200).json({ ok: false, error: 'aucune donnée de match' });
+    if (req.query && req.query.debug) return res.status(200).json({ ok: rows.length > 0, rows: rows.length, files: DBG });
+    if (!rows.length) return res.status(200).json({ ok: false, error: 'aucune donnée de match', files: DBG });
 
     rows.sort((a, b) => a.d - b.d); // chronologique
 

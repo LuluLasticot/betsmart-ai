@@ -9,14 +9,18 @@
    ========================================================================== */
 'use strict';
 
-// raw.githubusercontent est rate-limité (404) depuis les IP datacenter → on essaie
-// plusieurs miroirs CDN de GitHub dans l'ordre.
-const mirrors = (repo, file) => [
-  `https://cdn.jsdelivr.net/gh/JeffSackmann/${repo}@master/${file}`,
-  `https://cdn.statically.io/gh/JeffSackmann/${repo}/master/${file}`,
-  `https://raw.githack.com/JeffSackmann/${repo}/master/${file}`,
-  `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`
-];
+// raw.githubusercontent renvoie 404 depuis les IP Vercel → on récupère via des
+// proxies publics (IP propre), avec repli direct.
+const raw = (repo, file) => `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`;
+const mirrors = (repo, file) => {
+  const r = raw(repo, file);
+  return [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(r)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(r)}`,
+    `https://thingproxy.freeboard.io/fetch/${r}`,
+    r
+  ];
+};
 const ATP = (y) => mirrors('tennis_atp', `atp_matches_${y}.csv`);
 const WTA = (y) => mirrors('tennis_wta', `wta_matches_${y}.csv`);
 

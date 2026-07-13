@@ -16,8 +16,6 @@ const mirrors = (repo, file) => {
   const r = raw(repo, file);
   return [
     `https://api.allorigins.win/raw?url=${encodeURIComponent(r)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(r)}`,
-    `https://thingproxy.freeboard.io/fetch/${r}`,
     r
   ];
 };
@@ -29,7 +27,7 @@ const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-
 const DBG = [];
 async function fetchOne(url) {
   const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), 8000);
+  const to = setTimeout(() => ctrl.abort(), 9200);
   try {
     const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'BetSmartAI/1.0', 'Accept': 'text/plain,*/*' } });
     clearTimeout(to);
@@ -58,7 +56,7 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
     const Y = new Date().getFullYear();
-    const years = [Y, Y - 1, Y - 2, Y - 3];
+    const years = [Y - 1, Y - 2]; // 2 saisons récentes (léger, compatible plan + délai Vercel)
     const urls = [];
     years.forEach((y) => { urls.push(ATP(y)); urls.push(WTA(y)); });
 

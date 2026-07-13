@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v43';
+  const APP_VERSION = 'v44';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1720,11 +1720,11 @@
     if (!facts || facts.noData) {
       let hint;
       if (!state.settings.apiFootballKey) {
-        hint = 'Ajoutez votre clé API-Football dans les Réglages pour des faits réels (forme, xG, H2H).';
+        hint = 'Ajoutez votre clé api-sports.io dans les Réglages pour des faits réels (forme, buts, xG au foot, H2H).';
       } else if (facts && facts.noData) {
-        hint = `Données API-Football indisponibles pour ce match — ${escapeHTML(facts.reason || 'raison inconnue')}.`;
+        hint = `Données api-sports indisponibles pour ce match — ${escapeHTML(facts.reason || 'raison inconnue')}.`;
       } else {
-        hint = 'Données API-Football indisponibles pour ce match.';
+        hint = 'Données api-sports indisponibles pour ce match.';
       }
       return `<div class="facts-box empty"><span class="facts-none">${hint} Analyse basée sur la recherche web ; l'IA a pour consigne de ne rien inventer.</span></div>`;
     }
@@ -1743,7 +1743,7 @@
       ? `<div class="facts-h2h">Face-à-face (${facts.h2h.n}) : <strong>${facts.h2h.t1Wins}</strong> V ${escapeHTML(facts.homeName)} · <strong>${facts.h2h.draws}</strong> nuls · <strong>${facts.h2h.t2Wins}</strong> V ${escapeHTML(facts.awayName)}</div>`
       : '';
     return `<div class="facts-box">
-      <div class="facts-head">Données réelles · <span>API-Football</span>${facts.league ? ' · ' + escapeHTML(facts.league) : ''}</div>
+      <div class="facts-head">Données réelles · <span>api-sports</span>${facts.league ? ' · ' + escapeHTML(facts.league) : ''}</div>
       <div class="facts-teams">${teamRow(facts.homeName, facts.homeForm, facts.homeStanding)}${teamRow(facts.awayName, facts.awayForm, facts.awayStanding)}</div>
       ${h2h}
     </div>`;

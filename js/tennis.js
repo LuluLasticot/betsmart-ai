@@ -11,6 +11,7 @@ const TennisElo = (() => {
   const toks = (s) => norm(s).split(' ').filter((t) => t.length >= 3);
 
   let mem = null; // cache mémoire de session
+  let lastDiag = '';
   async function ratings(token) {
     if (mem && Date.now() - mem.at < 6 * 3600e3) return mem.players;
     // Cache IndexedDB 24 h
@@ -18,6 +19,7 @@ const TennisElo = (() => {
       const c = await DB.getSetting('tennisEloCache');
       if (c && c.players && Date.now() - c.at < 24 * 3600e3) { mem = c; return c.players; }
     } catch (_) {}
+    lastDiag = token ? '' : 'aucun token GitHub renseigné';
     try {
       const r = await fetch('/api/tennis' + (token ? '?token=' + encodeURIComponent(token) : ''));
       const j = await r.json();
@@ -26,7 +28,8 @@ const TennisElo = (() => {
         try { await DB.setSetting('tennisEloCache', mem, { silent: true }); } catch (_) {}
         return j.players;
       }
-    } catch (_) {}
+      if (j && !j.ok) lastDiag = 'serveur : ' + (j.error || 'inconnu') + (j.files ? ' [' + j.files.join(', ') + ']' : '');
+    } catch (e) { lastDiag = 'réseau : ' + String((e && e.message) || e); }
     return null;
   }
 
@@ -55,7 +58,7 @@ const TennisElo = (() => {
   async function matchFacts({ home, away, competition, token }) {
     if (!home || !away) return null;
     const players = await ratings(token);
-    if (!players) return { noData: true, reason: 'base Elo indisponible — ajoutez un token GitHub gratuit dans les Réglages (voir aide)' };
+    if (!players) return { noData: true, reason: 'base Elo indisponible (' + (lastDiag || 'raison inconnue') + ')' };
     const p1 = findPlayer(home, players), p2 = findPlayer(away, players);
     if (!p1 || !p2) {
       const miss = [!p1 ? home : null, !p2 ? away : null].filter(Boolean).join(' et ');

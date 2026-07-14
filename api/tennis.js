@@ -62,8 +62,8 @@ module.exports = async (req, res) => {
         rows.push({ w: c[iW], l: c[iL], s: surfKey(c[iS]), d: parseInt(c[iD], 10) || 0 });
       }
     });
-    if (req.query && req.query.debug) return res.status(200).json({ ok: rows.length > 0, rows: rows.length, files: DBG });
-    if (!rows.length) return res.status(200).json({ ok: false, error: 'aucune donnée', files: DBG });
+    if (req.query && req.query.debug) return res.status(200).json({ ok: rows.length > 0, rows: rows.length, tokenReçu: !!token, files: DBG });
+    if (!rows.length) return res.status(200).json({ ok: false, error: token ? 'GitHub a refusé la lecture' : 'token manquant', tokenReçu: !!token, files: DBG });
 
     rows.sort((a, b) => a.d - b.d);
     const R = {};

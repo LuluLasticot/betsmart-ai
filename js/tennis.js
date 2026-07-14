@@ -11,21 +11,24 @@ const TennisElo = (() => {
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
   const toks = (s) => norm(s).split(' ').filter((t) => t.length >= 3);
 
-  // raw.githubusercontent n'envoie pas de CORS → on passe par des proxies CORS
-  // (allorigins/corsproxy), avec raw direct en dernier recours.
-  const srcs = (repo, file) => {
-    const raw = `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`;
-    return [
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(raw)}`,
-      `https://corsproxy.io/?url=${encodeURIComponent(raw)}`,
-      raw
-    ];
-  };
+  // L'API GitHub (api.github.com) envoie du CORS et n'est pas bloquée comme raw
+  // depuis les datacenters. On récupère le contenu en base64 puis on le décode.
+  const srcs = (repo, file) => [
+    `https://api.github.com/repos/JeffSackmann/${repo}/contents/${file}`,
+    `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`
+  ];
+  const b64toUtf8 = (b) => { try { return decodeURIComponent(escape(atob(b.replace(/\n/g, '')))); } catch (_) { return atob(b.replace(/\n/g, '')); } };
   async function fetchText(urls) {
     for (const u of urls) {
       try {
-        const r = await fetch(u);
+        const isApi = u.indexOf('api.github.com') >= 0;
+        const r = await fetch(u, isApi ? { headers: { Accept: 'application/vnd.github+json' } } : {});
         if (!r.ok) continue;
+        if (isApi) {
+          const j = await r.json();
+          if (j && j.content) return b64toUtf8(j.content);
+          continue;
+        }
         const t = await r.text();
         if (t && t.length > 200) return t;
       } catch (_) { /* url suivante */ }

@@ -11,7 +11,7 @@ const TennisElo = (() => {
   const toks = (s) => norm(s).split(' ').filter((t) => t.length >= 3);
 
   let mem = null; // cache mémoire de session
-  async function ratings() {
+  async function ratings(token) {
     if (mem && Date.now() - mem.at < 6 * 3600e3) return mem.players;
     // Cache IndexedDB 24 h
     try {
@@ -19,7 +19,7 @@ const TennisElo = (() => {
       if (c && c.players && Date.now() - c.at < 24 * 3600e3) { mem = c; return c.players; }
     } catch (_) {}
     try {
-      const r = await fetch('/api/tennis');
+      const r = await fetch('/api/tennis' + (token ? '?token=' + encodeURIComponent(token) : ''));
       const j = await r.json();
       if (j && j.ok && j.players && Object.keys(j.players).length) {
         mem = { at: Date.now(), players: j.players };
@@ -52,10 +52,10 @@ const TennisElo = (() => {
   }
   const surfRating = (r, surf) => 0.6 * (surf === 'g' ? r.g : surf === 'c' ? r.c : r.h) + 0.4 * r.e;
 
-  async function matchFacts({ home, away, competition }) {
+  async function matchFacts({ home, away, competition, token }) {
     if (!home || !away) return null;
-    const players = await ratings();
-    if (!players) return { noData: true, reason: 'base Elo tennis indisponible pour le moment (réessayez plus tard)' };
+    const players = await ratings(token);
+    if (!players) return { noData: true, reason: 'base Elo indisponible — ajoutez un token GitHub gratuit dans les Réglages (voir aide)' };
     const p1 = findPlayer(home, players), p2 = findPlayer(away, players);
     if (!p1 || !p2) {
       const miss = [!p1 ? home : null, !p2 ? away : null].filter(Boolean).join(' et ');

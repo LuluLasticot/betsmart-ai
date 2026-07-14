@@ -14,7 +14,7 @@ const surfKey = (s) => { const t = (s || '').toLowerCase(); return t.startsWith(
 const K = (n) => 250 / Math.pow(n + 5, 0.4);
 
 const DBG = [];
-async function fetchCsv(repo, file) {
+async function fetchCsv(repo, file, token) {
   const url = API(repo, file);
   try {
     const ctrl = new AbortController();
@@ -24,7 +24,7 @@ async function fetchCsv(repo, file) {
       headers: {
         Accept: 'application/vnd.github+json',
         'User-Agent': 'BetSmartAI',
-        ...(process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {})
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
       }
     });
     clearTimeout(to);
@@ -40,10 +40,11 @@ async function fetchCsv(repo, file) {
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
+    const token = String((req.query && req.query.token) || process.env.GITHUB_TOKEN || '');
     const Y = new Date().getFullYear();
     const years = [Y - 1, Y - 2];
     const jobs = [];
-    years.forEach((y) => { jobs.push(fetchCsv('tennis_atp', `atp_matches_${y}.csv`)); jobs.push(fetchCsv('tennis_wta', `wta_matches_${y}.csv`)); });
+    years.forEach((y) => { jobs.push(fetchCsv('tennis_atp', `atp_matches_${y}.csv`, token)); jobs.push(fetchCsv('tennis_wta', `wta_matches_${y}.csv`, token)); });
     const texts = await Promise.all(jobs);
 
     const rows = [];

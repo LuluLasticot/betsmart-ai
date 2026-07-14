@@ -12,7 +12,7 @@
     bets: [],
     txs: [],
     picks: [],
-    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25 },
+    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', githubToken: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25 },
     period: 'all',
     view: 'dashboard',
     charts: {},
@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v53';
+  const APP_VERSION = 'v54';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1665,7 +1665,7 @@
       if (home && away) {
         if (/tennis/.test(sportN) && typeof TennisElo !== 'undefined') {
           // Tennis → modèle Elo (Sackmann) au lieu d'api-sports (non couvert)
-          try { facts = await TennisElo.matchFacts({ home, away, competition: lastAnalyzeComp || query }); } catch (_) {}
+          try { facts = await TennisElo.matchFacts({ home, away, competition: lastAnalyzeComp || query, token: state.settings.githubToken }); } catch (_) {}
         } else if (state.settings.apiFootballKey && typeof Facts !== 'undefined') {
           try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
         }
@@ -2185,6 +2185,12 @@
       toast(state.settings.apiFootballKey ? 'Clé API-Football enregistrée — faits réels activés ✓' : 'Clé API-Football retirée');
     });
 
+    $('#setGithubToken').addEventListener('change', async () => {
+      state.settings.githubToken = $('#setGithubToken').value.trim();
+      await DB.setSetting('githubToken', state.settings.githubToken);
+      toast(state.settings.githubToken ? 'Token GitHub enregistré — Elo tennis activé ✓' : 'Token GitHub retiré');
+    });
+
     $('#setOddsKey').addEventListener('change', async () => {
       state.settings.oddsApiKey = $('#setOddsKey').value.trim();
       await DB.setSetting('oddsApiKey', state.settings.oddsApiKey);
@@ -2287,6 +2293,7 @@
   function bindSettingsValues() {
     $('#setApiKey').value = state.settings.apiKey;
     $('#setApiFootballKey').value = state.settings.apiFootballKey || '';
+    $('#setGithubToken').value = state.settings.githubToken || '';
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;

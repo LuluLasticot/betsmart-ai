@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v55';
+  const APP_VERSION = 'v56';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1665,7 +1665,7 @@
       if (home && away) {
         if (/tennis/.test(sportN) && typeof TennisElo !== 'undefined') {
           // Tennis → modèle Elo (Sackmann) au lieu d'api-sports (non couvert)
-          try { facts = await TennisElo.matchFacts({ home, away, competition: lastAnalyzeComp || query, token: state.settings.githubToken }); } catch (_) {}
+          try { facts = await TennisElo.matchFacts({ home, away, competition: lastAnalyzeComp || query }); } catch (_) {}
         } else if (state.settings.apiFootballKey && typeof Facts !== 'undefined') {
           try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
         }
@@ -1728,10 +1728,10 @@
     if (facts && facts.tennis) {
       const bar = Math.round(facts.prob1);
       return `<div class="facts-box">
-        <div class="facts-head">Données réelles · <span>Elo tennis</span> · surface : ${escapeHTML(facts.surface)}</div>
+        <div class="facts-head">Données réelles · <span>Elo tennis</span> · surface : ${escapeHTML(facts.surface)}${facts.updated ? ' · maj ' + escapeHTML(facts.updated) : ''}</div>
         <div class="facts-teams">
-          <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p1.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p1.elo} · ${facts.p1.matches} matchs</span></div></div>
-          <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p2.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p2.elo} · ${facts.p2.matches} matchs</span></div></div>
+          <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p1.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p1.elo} · ${escapeHTML(facts.p1.rank || '')}</span></div></div>
+          <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p2.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p2.elo} · ${escapeHTML(facts.p2.rank || '')}</span></div></div>
         </div>
         <div class="elo-prob"><div class="elo-bar"><span style="width:${bar}%"></span></div>
           <div class="elo-prob-labels"><strong>${facts.prob1} %</strong> ${escapeHTML(facts.p1.name)} · ${escapeHTML(facts.p2.name)} <strong>${facts.prob2} %</strong></div>
@@ -1740,10 +1740,10 @@
     }
     if (!facts || facts.noData) {
       let hint;
-      if (!state.settings.apiFootballKey) {
-        hint = 'Ajoutez votre clé api-sports.io dans les Réglages pour des faits réels (forme, buts, xG au foot, H2H).';
-      } else if (facts && facts.noData) {
+      if (facts && facts.noData) {
         hint = `Données factuelles indisponibles pour ce match — ${escapeHTML(facts.reason || 'raison inconnue')}.`;
+      } else if (!state.settings.apiFootballKey) {
+        hint = 'Ajoutez votre clé api-sports.io dans les Réglages pour des faits réels (forme, buts, xG au foot, H2H).';
       } else {
         hint = 'Données api-sports indisponibles pour ce match.';
       }
@@ -2185,12 +2185,6 @@
       toast(state.settings.apiFootballKey ? 'Clé API-Football enregistrée — faits réels activés ✓' : 'Clé API-Football retirée');
     });
 
-    $('#setGithubToken').addEventListener('change', async () => {
-      state.settings.githubToken = $('#setGithubToken').value.trim();
-      await DB.setSetting('githubToken', state.settings.githubToken);
-      toast(state.settings.githubToken ? 'Token GitHub enregistré — Elo tennis activé ✓' : 'Token GitHub retiré');
-    });
-
     $('#setOddsKey').addEventListener('change', async () => {
       state.settings.oddsApiKey = $('#setOddsKey').value.trim();
       await DB.setSetting('oddsApiKey', state.settings.oddsApiKey);
@@ -2293,7 +2287,6 @@
   function bindSettingsValues() {
     $('#setApiKey').value = state.settings.apiKey;
     $('#setApiFootballKey').value = state.settings.apiFootballKey || '';
-    $('#setGithubToken').value = state.settings.githubToken || '';
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;

@@ -28,7 +28,12 @@ async function fetchCsv(repo, file, token) {
       }
     });
     clearTimeout(to);
-    if (!r.ok) { DBG.push(`${file}:HTTP${r.status}`); return null; }
+    if (!r.ok) {
+      let msg = '';
+      try { const b = await r.json(); msg = (b && b.message ? b.message : '').slice(0, 40); } catch (_) {}
+      DBG.push(`${file}:HTTP${r.status}:${msg}`);
+      return null;
+    }
     const j = await r.json();
     if (!j || !j.content) { DBG.push(`${file}:nocontent`); return null; }
     const csv = Buffer.from(j.content.replace(/\n/g, ''), 'base64').toString('utf8');

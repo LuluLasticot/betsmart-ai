@@ -1,9 +1,8 @@
 /* ==========================================================================
-   BetSmart AI — Modèle Elo tennis (calcul CÔTÉ CLIENT)
-   Les IP datacenter (Vercel) sont bloquées par GitHub, mais le navigateur de
-   l'utilisateur (IP résidentielle) accède librement aux CSV Sackmann (CORS *).
-   On télécharge donc les matchs ATP+WTA (2 saisons), on calcule un Elo par
-   surface, et on met en cache 24 h dans IndexedDB. Couvre l'angle mort tennis.
+   BetSmart AI — Modèle Elo tennis (côté client léger)
+   Le calcul Elo est fait par /api/tennis (serveur, via l'API GitHub). Le
+   client ne fait que lire la table compacte des ratings (petit JSON, caché
+   24 h côté CDN + IndexedDB), détecter la surface, et produire une proba.
    ========================================================================== */
 'use strict';
 
@@ -11,99 +10,24 @@ const TennisElo = (() => {
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
   const toks = (s) => norm(s).split(' ').filter((t) => t.length >= 3);
 
-  // L'API GitHub (api.github.com) envoie du CORS et n'est pas bloquée comme raw
-  // depuis les datacenters. On récupère le contenu en base64 puis on le décode.
-  const srcs = (repo, file) => [
-    `https://api.github.com/repos/JeffSackmann/${repo}/contents/${file}`,
-    `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`
-  ];
-  const b64toUtf8 = (b) => { try { return decodeURIComponent(escape(atob(b.replace(/\n/g, '')))); } catch (_) { return atob(b.replace(/\n/g, '')); } };
-  async function fetchText(urls) {
-    for (const u of urls) {
-      try {
-        const isApi = u.indexOf('api.github.com') >= 0;
-        const r = await fetch(u, isApi ? { headers: { Accept: 'application/vnd.github+json' } } : {});
-        if (!r.ok) continue;
-        if (isApi) {
-          const j = await r.json();
-          if (j && j.content) return b64toUtf8(j.content);
-          continue;
-        }
-        const t = await r.text();
-        if (t && t.length > 200) return t;
-      } catch (_) { /* url suivante */ }
-    }
-    return null;
-  }
-
-  const K = (n) => 250 / Math.pow(n + 5, 0.4);
-  const surfKey = (s) => { const t = (s || '').toLowerCase(); return t.startsWith('clay') ? 'C' : t.startsWith('grass') ? 'G' : 'H'; };
-
-  let building = null; // promesse de calcul en cours (évite les doublons)
-
-  async function computeRatings() {
-    const Y = new Date().getFullYear();
-    const years = [Y - 1, Y - 2];
-    const jobs = [];
-    years.forEach((y) => {
-      jobs.push(fetchText(srcs('tennis_atp', `atp_matches_${y}.csv`)));
-      jobs.push(fetchText(srcs('tennis_wta', `wta_matches_${y}.csv`)));
-    });
-    const texts = await Promise.all(jobs);
-
-    const rows = [];
-    texts.forEach((txt) => {
-      if (!txt) return;
-      const lines = txt.split('\n');
-      const head = lines[0].split(',');
-      const iS = head.indexOf('surface'), iD = head.indexOf('tourney_date');
-      const iW = head.indexOf('winner_name'), iL = head.indexOf('loser_name');
-      if (iW < 0 || iL < 0) return;
-      for (let k = 1; k < lines.length; k++) {
-        const c = lines[k].split(',');
-        if (c.length < head.length) continue;
-        if (!c[iW] || !c[iL]) continue;
-        rows.push({ w: c[iW], l: c[iL], s: surfKey(c[iS]), d: parseInt(c[iD], 10) || 0 });
-      }
-    });
-    if (!rows.length) return null;
-    rows.sort((a, b) => a.d - b.d);
-
-    const R = {};
-    const get = (n) => R[n] || (R[n] = { all: 1500, H: 1500, C: 1500, G: 1500, n: 0, nH: 0, nC: 0, nG: 0, last: 0 });
-    for (const m of rows) {
-      const W = get(m.w), L = get(m.l), sk = m.s;
-      const eW = 1 / (1 + Math.pow(10, (L.all - W.all) / 400));
-      W.all += K(W.n) * (1 - eW); L.all -= K(L.n) * (1 - eW);
-      const eWs = 1 / (1 + Math.pow(10, (L[sk] - W[sk]) / 400));
-      W[sk] += K(W['n' + sk]) * (1 - eWs); L[sk] -= K(L['n' + sk]) * (1 - eWs);
-      W.n++; L.n++; W['n' + sk]++; L['n' + sk]++;
-      W.last = Math.max(W.last, m.d); L.last = Math.max(L.last, m.d);
-    }
-    const cutoff = (new Date().getFullYear() - 1) * 10000;
-    const players = {};
-    for (const [name, r] of Object.entries(R)) {
-      if (r.last < cutoff || r.n < 5) continue;
-      players[norm(name)] = { e: Math.round(r.all), h: Math.round(r.H), c: Math.round(r.C), g: Math.round(r.G), n: r.n };
-    }
-    return Object.keys(players).length ? players : null;
-  }
-
+  let mem = null; // cache mémoire de session
   async function ratings() {
-    // Cache IndexedDB (24 h)
+    if (mem && Date.now() - mem.at < 6 * 3600e3) return mem.players;
+    // Cache IndexedDB 24 h
     try {
-      const cached = await DB.getSetting('tennisEloCache');
-      if (cached && cached.players && Date.now() - cached.at < 24 * 3600e3) return cached.players;
+      const c = await DB.getSetting('tennisEloCache');
+      if (c && c.players && Date.now() - c.at < 24 * 3600e3) { mem = c; return c.players; }
     } catch (_) {}
-    if (!building) {
-      building = (async () => {
-        const players = await computeRatings();
-        if (players) { try { await DB.setSetting('tennisEloCache', { at: Date.now(), players }, { silent: true }); } catch (_) {} }
-        building = null;
-        return players;
-      })();
-    }
-    return building;
+    try {
+      const r = await fetch('/api/tennis');
+      const j = await r.json();
+      if (j && j.ok && j.players && Object.keys(j.players).length) {
+        mem = { at: Date.now(), players: j.players };
+        try { await DB.setSetting('tennisEloCache', mem, { silent: true }); } catch (_) {}
+        return j.players;
+      }
+    } catch (_) {}
+    return null;
   }
 
   const SURF_LABEL = { h: 'dur', c: 'terre battue', g: 'gazon' };
@@ -131,7 +55,7 @@ const TennisElo = (() => {
   async function matchFacts({ home, away, competition }) {
     if (!home || !away) return null;
     const players = await ratings();
-    if (!players) return { noData: true, reason: 'base Elo indisponible (téléchargement des données tennis échoué)' };
+    if (!players) return { noData: true, reason: 'base Elo tennis indisponible pour le moment (réessayez plus tard)' };
     const p1 = findPlayer(home, players), p2 = findPlayer(away, players);
     if (!p1 || !p2) {
       const miss = [!p1 ? home : null, !p2 ? away : null].filter(Boolean).join(' et ');

@@ -12,7 +12,7 @@
     bets: [],
     txs: [],
     picks: [],
-    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', githubToken: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25 },
+    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', githubToken: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25, notifyAlerts: false },
     period: 'all',
     view: 'dashboard',
     charts: {},
@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v59';
+  const APP_VERSION = 'v60';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1114,6 +1114,14 @@
       if (warning && !confirm(`⚠️ ${warning}\n\nEnregistrer quand même ?`)) return;
     }
 
+    // Garde anti-corrélation : deux paris en cours sur le même match ne sont pas indépendants
+    if (!existing && bet.event) {
+      const nrm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+      const ev = nrm(bet.event);
+      const corr = ev && state.bets.find((b) => (b.status === 'pending' || !b.status) && nrm(b.event) === ev);
+      if (corr && !confirm(`⚠️ Tu as déjà un pari en cours sur ce match (« ${corr.selection} »). Deux paris sur la même rencontre sont corrélés : le risque se cumule au lieu de se diversifier.\n\nEnregistrer quand même ?`)) return;
+    }
+
     const saved = await DB.saveBet(bet);
     if (existing) {
       state.bets = state.bets.map((b) => (b.id === saved.id ? saved : b));
@@ -1553,6 +1561,15 @@
       await DB.setSetting('lastRadar', { result, profileKey: $('#advProfile').value, bankroll: ctx.bankroll, at });
       renderAdvisorResult(result, $('#advProfile').value, ctx.bankroll, at);
       renderRadarPerf();
+      // Alerte : nouveaux picks à value détectés
+      if (result.picks.length) {
+        const top = result.picks[0];
+        Notify.send(
+          `Radar : ${result.picks.length} value${result.picks.length > 1 ? 's' : ''} détectée${result.picks.length > 1 ? 's' : ''}`,
+          `${top.match || ''} — ${top.selection || ''}${top.value_pct != null ? ' (+' + Number(top.value_pct).toFixed(1) + '%)' : ''}`,
+          'radar-' + at
+        );
+      }
       // Les picks « tous marchés » portent déjà la cote coteur réelle → pas de re-vérification.
       if (!result.coteurMarkets) {
         verifyLiveOdds(result, $('#advProfile').value, ctx.bankroll, at); // en arrière-plan
@@ -1723,6 +1740,42 @@
     }).join('');
   }
 
+  /* ---- Notifications locales (alertes value, coup d'envoi) ---- */
+  const Notify = {
+    supported: () => typeof Notification !== 'undefined',
+    enabled: () => Notify.supported() && Notification.permission === 'granted' && state.settings.notifyAlerts !== false,
+    async ask() {
+      if (!Notify.supported()) return false;
+      if (Notification.permission === 'granted') return true;
+      if (Notification.permission === 'denied') return false;
+      try { return (await Notification.requestPermission()) === 'granted'; } catch (_) { return false; }
+    },
+    send(title, body, tag) {
+      if (!Notify.enabled()) return;
+      try {
+        const n = new Notification(title, { body, tag: tag || 'betsmart', icon: './icons/icon-192.png', badge: './icons/icon-192.png' });
+        n.onclick = () => { try { window.focus(); } catch (_) {} n.close(); };
+      } catch (_) {}
+    }
+  };
+  const _notified = new Set(); // évite les doublons d'alerte dans une session
+  let _prevLive = new Set();   // matchs en live au dernier rafraîchissement
+  let _liveSeeded = false;     // on n'alerte pas au tout premier poll (matchs déjà en cours)
+
+  /* ---- Line shopping : comparaison des cotes par bookmaker (meilleur prix) ---- */
+  function lineShopHTML(prices) {
+    if (!Array.isArray(prices) || prices.length < 2) return '';
+    const sorted = [...prices].sort((a, b) => b.price - a.price);
+    const best = sorted[0].price, worst = sorted[sorted.length - 1].price;
+    const gain = worst > 0 ? Math.round((best / worst - 1) * 1000) / 10 : 0;
+    const cells = sorted.map((p, i) => `<span class="ls-book${i === 0 ? ' ls-best' : ''}">${escapeHTML(p.book)} <strong>${Number(p.price).toFixed(2)}</strong></span>`).join('');
+    return `<div class="lineshop">
+      <span class="ls-head">Line shopping</span>
+      <div class="ls-books">${cells}</div>
+      ${gain > 0 ? `<span class="ls-gain">+${gain.toFixed(1)} % en jouant chez ${escapeHTML(sorted[0].book)}</span>` : ''}
+    </div>`;
+  }
+
   /** Encart « Données réelles » (API-Football) affiché dans l'analyse d'un match. */
   function matchFactsHTML(facts) {
     if (facts && facts.tennis) {
@@ -1858,6 +1911,7 @@
                 <button class="link-btn mycote-bet" data-idx="${i}">parier${stake > 0 ? ' ' + Stats.fmtMoney(stake) : ''}</button>
               </div>
             </div>
+            ${lineShopHTML(m.live)}
           </div>`;
         }).join('')}
       </div>
@@ -2236,6 +2290,22 @@
       toast(state.settings.onlyMyBooks ? 'Value limitée à vos bookmakers' : 'Tous les bookmakers considérés');
     });
 
+    $('#setNotifyAlerts').addEventListener('change', async () => {
+      const on = $('#setNotifyAlerts').checked;
+      if (on) {
+        const ok = await Notify.ask();
+        if (!ok) {
+          $('#setNotifyAlerts').checked = false;
+          toast(Notify.supported() ? 'Autorisation des notifications refusée par le navigateur' : 'Notifications non supportées sur cet appareil');
+          return;
+        }
+        Notify.send('Alertes activées ✓', 'Tu seras prévenu des values du Radar et des coups d\'envoi.', 'welcome');
+      }
+      state.settings.notifyAlerts = on;
+      await DB.setSetting('notifyAlerts', on);
+      toast(on ? 'Alertes activées' : 'Alertes désactivées');
+    });
+
     $('#setStaking').addEventListener('change', async () => {
       state.settings.stakingMode = $('#setStaking').value;
       await DB.setSetting('stakingMode', state.settings.stakingMode);
@@ -2319,6 +2389,7 @@
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;
+    $('#setNotifyAlerts').checked = state.settings.notifyAlerts === true && Notify.supported() && Notification.permission === 'granted';
     $('#setStaking').value = state.settings.stakingMode || 'kelly';
     $('#setMaxExposure').value = state.settings.maxExposurePct || 25;
     $('#setModel').value = state.settings.model;
@@ -2869,9 +2940,11 @@
   function renderLive(coteurScores, geminiScores, matches) {
     const cById = new Map(coteurScores.map((s) => [String(s.id), s]));
     const gById = new Map(geminiScores.map((s) => [String(s.id), s]));
+    const liveNow = new Map(); // id → nom lisible, pour l'alerte coup d'envoi
 
     const rows = matches.map((m) => {
       const teams = escapeHTML((m.event || '').replace(/\s*[–—-]\s*/g, ' – '));
+      const plain = (m.event || '').replace(/\s*[–—-]\s*/g, ' – ');
       const c = cById.get(String(m.id));
 
       if (c) {
@@ -2883,6 +2956,7 @@
         const st = (c.status || '').replace(/EN DIRECT\s*[•·]?\s*/i, '').trim();
         const min = c.finished ? 'Fin' : (st || 'live');
         const cls = c.finished ? 'done' : /mi-?temps/i.test(st) ? 'ht' : '';
+        if (!c.finished) liveNow.set(String(m.id), plain);
         return liveRow(teams, score, min, cls);
       }
 
@@ -2894,8 +2968,21 @@
       const score = `${s.score_dom ?? 0}–${s.score_ext ?? 0}`;
       const cls = s.etat === 'mi_temps' ? 'ht' : s.etat === 'termine' ? 'done' : '';
       const min = s.etat === 'termine' ? 'Fin' : s.etat === 'mi_temps' ? 'MT' : (s.minute || '');
+      if (s.etat === 'en_cours' || s.etat === 'mi_temps') liveNow.set(String(m.id), plain);
       return liveRow(teams, score, min, cls);
     });
+
+    // Alerte « coup d'envoi » : match qui passe en live entre deux rafraîchissements
+    if (_liveSeeded) {
+      for (const [id, name] of liveNow) {
+        if (!_prevLive.has(id) && !_notified.has('ko-' + id)) {
+          _notified.add('ko-' + id);
+          Notify.send('⚽ Coup d\'envoi', `${name} — c'est parti, tu as un pari sur ce match.`, 'ko-' + id);
+        }
+      }
+    }
+    _prevLive = new Set(liveNow.keys());
+    _liveSeeded = true;
 
     const html = rows.join('') || '<p class="live-empty">Aucun match en cours.</p>';
     $('#liveBoxList').innerHTML = html;

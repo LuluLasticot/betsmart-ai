@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v58';
+  const APP_VERSION = 'v59';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1775,10 +1775,25 @@
     const lineups = (facts.homeLineup || facts.awayLineup)
       ? `<div class="facts-lineups"><div class="facts-inj-head">Compositions annoncées</div>${luLine(facts.homeName, facts.homeLineup)}${luLine(facts.awayName, facts.awayLineup)}</div>`
       : '';
+    let model = '';
+    if (facts.model) {
+      const m = facts.model;
+      model = `<div class="facts-model">
+        <div class="facts-inj-head">Modèle Poisson · buts attendus ${m.lambdaHome} – ${m.lambdaAway}</div>
+        <div class="facts-model-bar" title="Probabilités du modèle (1N2)">
+          <span class="fm-h" style="width:${m.p1}%">${m.p1 >= 12 ? m.p1 + '%' : ''}</span>
+          <span class="fm-d" style="width:${m.pX}%">${m.pX >= 12 ? m.pX + '%' : ''}</span>
+          <span class="fm-a" style="width:${m.p2}%">${m.p2 >= 12 ? m.p2 + '%' : ''}</span>
+        </div>
+        <div class="facts-model-legend"><span>${escapeHTML(facts.homeName)} ${m.p1}%</span><span>Nul ${m.pX}%</span><span>${escapeHTML(facts.awayName)} ${m.p2}%</span></div>
+        <div class="facts-model-sub">Over 2.5 : <strong>${m.over25}%</strong> · Under <strong>${m.under25}%</strong> · Les deux marquent <strong>${m.btts}%</strong> <span class="facts-xg-sub">(sur ${m.sample} matchs/équipe)</span></div>
+      </div>`;
+    }
     return `<div class="facts-box">
       <div class="facts-head">Données réelles · <span>api-sports</span>${facts.league ? ' · ' + escapeHTML(facts.league) : ''}</div>
       <div class="facts-teams">${teamRow(facts.homeName, facts.homeForm, facts.homeStanding)}${teamRow(facts.awayName, facts.awayForm, facts.awayStanding)}</div>
       ${h2h}
+      ${model}
       ${injBlock}
       ${lineups}
     </div>`;

@@ -84,13 +84,26 @@ const Advisor = (() => {
       .map(([sport, s]) => `- ${sport} : ${s.won}/${s.n} gagnés, ${s.pl >= 0 ? '+' : ''}${s.pl.toFixed(1)} unités`)
       .join('\n');
 
+    // Pilotage par la CLV (Closing Line Value) : la vraie boussole de l'edge.
+    // Battre la clôture est le signe le plus fiable d'un avantage réel, avant même le résultat.
+    let clvBlock = '';
+    if (stats.clvCount >= 8 && stats.avgClv != null) {
+      if (stats.avgClv <= -0.5) {
+        clvBlock = `\n- CLV MOYENNE : ${stats.avgClv} % (${stats.clvPositivePct} % de tes picks battent la clôture). C'est NÉGATIF : en moyenne le marché se resserre CONTRE toi après ta prise — signe que tes probabilités sont trop optimistes ou que tu joues trop tard. CONSIGNE : sois nettement plus sélectif, ne propose que des angles où l'information non intégrée par le marché est manifeste, et abstiens-toi au moindre doute.`;
+      } else if (stats.avgClv >= 1) {
+        clvBlock = `\n- CLV MOYENNE : +${stats.avgClv} % (${stats.clvPositivePct} % de tes picks battent la clôture). C'est POSITIF : tu prends systématiquement de meilleures cotes que la clôture, ton edge est réel. Maintiens exactement cette rigueur et ce niveau d'exigence.`;
+      } else {
+        clvBlock = `\n- CLV MOYENNE : ${stats.avgClv >= 0 ? '+' : ''}${stats.avgClv} % (${stats.clvPositivePct} % battent la clôture) : à l'équilibre. Vise à améliorer ta CLV en privilégiant les angles où tu détectes l'information avant le marché.`;
+      }
+    }
+
     return `
 # RETOUR D'EXPÉRIENCE SUR TES PRÉCÉDENTES ANALYSES (à intégrer sérieusement)
 
 Sur tes ${settled.length} derniers picks réglés :
 - Probabilité moyenne annoncée : ${stats.avgPredicted} % — taux de réussite réel : ${stats.actualWinRate} %.
 ${stats.calibrationGap > 5 ? `- Historiquement tu surestimes tes probabilités d'environ ${stats.calibrationGap} points. IMPORTANT : le système applique DÉJÀ automatiquement une correction de calibration (ancrage marché) après ta réponse — ne réduis donc PAS toi-même tes probabilités, sinon la correction est comptée deux fois. Donne ta probabilité honnête et bien argumentée ; reste simplement rigoureux et factuel.` : stats.calibrationGap < -5 ? `- Historiquement tu sous-estimes tes probabilités d'environ ${Math.abs(stats.calibrationGap)} points : tu peux être légèrement plus assertif quand un fait concret le justifie.` : '- Ta calibration est correcte : maintiens cette rigueur.'}
-- ROI théorique à mise constante : ${stats.flatRoi} %.
+- ROI théorique à mise constante : ${stats.flatRoi} %.${clvBlock}
 ${sportLines ? `Par sport :\n${sportLines}\nÉvite de proposer des picks dans les segments où ton bilan est nettement négatif, sauf signal exceptionnellement fort.` : ''}`;
   }
 

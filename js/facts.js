@@ -131,6 +131,68 @@ const Facts = (() => {
     } catch (_) { return null; }
   }
 
+  // Rencontre à venir (non commencée) entre deux équipes, dans les fixtures de saison
+  // (déjà en cache via recentFormFB → pas de coût réseau supplémentaire).
+  const NS = new Set(['TBD', 'NS', 'PST']);
+  async function upcomingFixtureFB(id1, id2, key) {
+    const chunks = await Promise.all(SEASONS().map((y) => call(`fixtures?team=${id1}&season=${y}`, key, 'football')));
+    const res = chunks.filter(Array.isArray).flat();
+    const now = Date.now();
+    const cand = res.filter((fx) => fx.fixture && NS.has(fx.fixture.status.short)
+      && (fx.teams.home.id === id2 || fx.teams.away.id === id2))
+      .sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
+    // Le prochain à venir (ou le plus proche si tous passés en statut NS résiduel)
+    const next = cand.find((fx) => new Date(fx.fixture.date).getTime() >= now - 6 * 3600e3) || cand[0];
+    return next ? { id: next.fixture.id, date: (next.fixture.date || '').slice(0, 10), venue: (next.fixture.venue && next.fixture.venue.name) || null } : null;
+  }
+
+  // Blessures/absences précises pour une rencontre donnée → {teamId → [{player, reason, type}]}
+  async function injuriesByFixtureFB(fixtureId, key) {
+    const res = await call(`injuries?fixture=${fixtureId}`, key, 'football');
+    if (!Array.isArray(res) || !res.length) return null;
+    const by = {};
+    res.forEach((it) => {
+      const tid = it.team && it.team.id; if (!tid) return;
+      (by[tid] = by[tid] || []).push({ player: (it.player && it.player.name) || '?', reason: (it.player && it.player.reason) || it.reason || '', type: (it.player && it.player.type) || it.type || '' });
+    });
+    return by;
+  }
+  // Repli : absences récentes par équipe sur la saison (dédoublonné par joueur, dernières en date)
+  async function injuriesByTeamFB(teamId, key) {
+    const Y = new Date().getFullYear();
+    const chunks = await Promise.all([Y, Y - 1].map((y) => call(`injuries?team=${teamId}&season=${y}`, key, 'football')));
+    const res = chunks.filter(Array.isArray).flat();
+    if (!res.length) return null;
+    res.sort((a, b) => new Date((b.fixture && b.fixture.date) || 0) - new Date((a.fixture && a.fixture.date) || 0));
+    const seen = new Set(); const out = [];
+    const cut = Date.now() - 21 * 86400e3; // absences des ~3 dernières semaines
+    for (const it of res) {
+      const nm = it.player && it.player.name; if (!nm || seen.has(nm)) continue;
+      const d = new Date((it.fixture && it.fixture.date) || 0).getTime();
+      if (d < cut) continue;
+      seen.add(nm);
+      out.push({ player: nm, reason: (it.player && it.player.reason) || '', type: (it.player && it.player.type) || '' });
+      if (out.length >= 6) break;
+    }
+    return out.length ? out : null;
+  }
+
+  // Compositions (probables/confirmées) — disponibles ~20-40 min avant le coup d'envoi
+  async function lineupsFB(fixtureId, key) {
+    const res = await call(`fixtures/lineups?fixture=${fixtureId}`, key, 'football');
+    if (!Array.isArray(res) || !res.length) return null;
+    const by = {};
+    res.forEach((l) => {
+      const tid = l.team && l.team.id; if (!tid) return;
+      by[tid] = {
+        formation: l.formation || null,
+        coach: (l.coach && l.coach.name) || null,
+        xi: (l.startXI || []).map((e) => e.player && e.player.name).filter(Boolean)
+      };
+    });
+    return Object.keys(by).length ? by : null;
+  }
+
   /* ---------- Sports d'équipe (v1) : forme (buts/points) + H2H ---------- */
   async function recentFormV1(teamId, key, sport, n = 6) {
     const chunks = await Promise.all(SEASONS().map((y) => call(`games?team=${teamId}&season=${y}`, key, sport)));
@@ -175,6 +237,7 @@ const Facts = (() => {
       if (!ht && !at) return { noData: true, reason: lastError || 'équipes introuvables dans api-sports' };
 
       let hForm = null, aForm = null, duel = null, hStand = null, aStand = null, league = null;
+      let hInj = null, aInj = null, hLineup = null, aLineup = null, venue = null;
       if (sk === 'football') {
         [hForm, aForm] = await Promise.all([
           ht ? recentFormFB(ht.id, apiKey) : null,
@@ -186,6 +249,20 @@ const Facts = (() => {
         if (ht && at) jobs.push(h2hFB(ht.id, at.id, apiKey).then((d) => { duel = d; }));
         if (lg && lg.id && ht) jobs.push(standingFB(lg.id, lg.season, ht.id, apiKey).then((d) => { hStand = d; }));
         if (lg && lg.id && at) jobs.push(standingFB(lg.id, lg.season, at.id, apiKey).then((d) => { aStand = d; }));
+        // Blessures/compos : cibler la rencontre à venir si on la trouve, sinon repli par équipe
+        if (ht && at) {
+          jobs.push(upcomingFixtureFB(ht.id, at.id, apiKey).then(async (fx) => {
+            if (fx) {
+              venue = fx.venue;
+              const [inj, lu] = await Promise.all([injuriesByFixtureFB(fx.id, apiKey), lineupsFB(fx.id, apiKey)]);
+              if (inj) { hInj = inj[ht.id] || null; aInj = inj[at.id] || null; }
+              if (lu) { hLineup = lu[ht.id] || null; aLineup = lu[at.id] || null; }
+            }
+            // Repli blessures par équipe si la rencontre n'a rien donné
+            if (!hInj) hInj = await injuriesByTeamFB(ht.id, apiKey);
+            if (!aInj) aInj = await injuriesByTeamFB(at.id, apiKey);
+          }));
+        }
         await Promise.all(jobs);
         league = lg ? lg.name : null;
       } else {
@@ -199,9 +276,11 @@ const Facts = (() => {
       const facts = {
         homeName: ht ? ht.name : home, awayName: at ? at.name : away,
         homeForm: hForm, awayForm: aForm, h2h: duel,
-        homeStanding: hStand, awayStanding: aStand, league, sport: sk, source: 'api-sports'
+        homeStanding: hStand, awayStanding: aStand, league, venue,
+        homeInjuries: hInj, awayInjuries: aInj, homeLineup: hLineup, awayLineup: aLineup,
+        sport: sk, source: 'api-sports'
       };
-      if (!(hForm || aForm || duel || hStand || aStand)) {
+      if (!(hForm || aForm || duel || hStand || aStand || hInj || aInj)) {
         return { noData: true, reason: lastError || `aucune donnée récente (équipes trouvées : ${facts.homeName} / ${facts.awayName})` };
       }
       facts.text = formatText(facts);
@@ -216,11 +295,28 @@ const Facts = (() => {
     const last = f.recent.slice(0, 5).map((r) => `${r.score} ${r.home ? 'dom' : 'ext'} vs ${r.opp} (${r.res})`).join(' ; ');
     return `- ${name} : ${f.w}V ${f.d}N ${f.l}D sur ${f.played} matchs, ${f.gf} marqués / ${f.ga} encaissés. Série (récent→ancien) : ${f.streak}.${xg}${pos}\n    Derniers : ${last}.`;
   }
+  const fmtInj = (name, list) => {
+    if (!list || !list.length) return `- ${name} : aucune absence signalée dans les données.`;
+    const items = list.slice(0, 6).map((i) => `${i.player}${i.reason ? ' (' + i.reason + ')' : ''}${i.type && !/out|missing/i.test(i.type) ? ' [' + i.type + ']' : ''}`).join(', ');
+    return `- ${name} — absents/incertains : ${items}.`;
+  };
+  const fmtLineup = (name, l) => {
+    if (!l) return null;
+    const xi = l.xi && l.xi.length ? ` XI : ${l.xi.join(', ')}.` : '';
+    return `- ${name}${l.formation ? ' (' + l.formation + ')' : ''}${l.coach ? ' — coach ' + l.coach : ''}.${xi}`;
+  };
   function formatText(f) {
     const lines = ['# DONNÉES RÉELLES (api-sports — base factuelle, ne rien inventer au-delà) :'];
     lines.push(fmtForm(f.homeName, f.homeForm, f.homeStanding));
     lines.push(fmtForm(f.awayName, f.awayForm, f.awayStanding));
     if (f.h2h && f.h2h.n) lines.push(`- Confrontations directes (${f.h2h.n}) : ${f.h2h.t1Wins} victoires ${f.homeName}, ${f.h2h.draws} nuls, ${f.h2h.t2Wins} victoires ${f.awayName}.`);
+    if (f.homeInjuries || f.awayInjuries) {
+      lines.push('## Blessures / suspensions (impact fort sur l\'issue — à pondérer) :');
+      lines.push(fmtInj(f.homeName, f.homeInjuries));
+      lines.push(fmtInj(f.awayName, f.awayInjuries));
+    }
+    const lus = [fmtLineup(f.homeName, f.homeLineup), fmtLineup(f.awayName, f.awayLineup)].filter(Boolean);
+    if (lus.length) { lines.push('## Compositions annoncées :'); lus.forEach((l) => lines.push(l)); }
     return lines.join('\n');
   }
 

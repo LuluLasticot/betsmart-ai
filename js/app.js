@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v57';
+  const APP_VERSION = 'v58';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1763,10 +1763,24 @@
     const h2h = (facts.h2h && facts.h2h.n)
       ? `<div class="facts-h2h">Face-à-face (${facts.h2h.n}) : <strong>${facts.h2h.t1Wins}</strong> V ${escapeHTML(facts.homeName)} · <strong>${facts.h2h.draws}</strong> nuls · <strong>${facts.h2h.t2Wins}</strong> V ${escapeHTML(facts.awayName)}</div>`
       : '';
+    const injCol = (name, list) => {
+      if (!list || !list.length) return `<div class="facts-inj-col"><div class="facts-inj-team">${escapeHTML(name)}</div><span class="facts-inj-none">aucune absence signalée</span></div>`;
+      const items = list.slice(0, 5).map((i) => `<li>${escapeHTML(i.player)}${i.reason ? ` <span class="facts-inj-reason">${escapeHTML(i.reason)}</span>` : ''}</li>`).join('');
+      return `<div class="facts-inj-col"><div class="facts-inj-team">${escapeHTML(name)}</div><ul class="facts-inj-list">${items}</ul></div>`;
+    };
+    const injBlock = (facts.homeInjuries || facts.awayInjuries)
+      ? `<div class="facts-inj"><div class="facts-inj-head">⚠ Absences / incertains</div><div class="facts-inj-cols">${injCol(facts.homeName, facts.homeInjuries)}${injCol(facts.awayName, facts.awayInjuries)}</div></div>`
+      : '';
+    const luLine = (name, l) => l ? `<div class="facts-lineup-row"><strong>${escapeHTML(name)}</strong>${l.formation ? ` · ${escapeHTML(l.formation)}` : ''}${l.xi && l.xi.length ? ` · <span class="facts-lineup-xi">${escapeHTML(l.xi.join(', '))}</span>` : ''}</div>` : '';
+    const lineups = (facts.homeLineup || facts.awayLineup)
+      ? `<div class="facts-lineups"><div class="facts-inj-head">Compositions annoncées</div>${luLine(facts.homeName, facts.homeLineup)}${luLine(facts.awayName, facts.awayLineup)}</div>`
+      : '';
     return `<div class="facts-box">
       <div class="facts-head">Données réelles · <span>api-sports</span>${facts.league ? ' · ' + escapeHTML(facts.league) : ''}</div>
       <div class="facts-teams">${teamRow(facts.homeName, facts.homeForm, facts.homeStanding)}${teamRow(facts.awayName, facts.awayForm, facts.awayStanding)}</div>
       ${h2h}
+      ${injBlock}
+      ${lineups}
     </div>`;
   }
 

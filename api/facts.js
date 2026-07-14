@@ -23,7 +23,7 @@ const HOSTS = {
 // Endpoints autorisés (préfixes) — foot (v3) + sports d'équipe (v1)
 const ALLOWED = [
   'teams', 'standings', 'injuries',
-  'fixtures', 'fixtures/statistics', 'fixtures/headtohead',
+  'fixtures', 'fixtures/statistics', 'fixtures/headtohead', 'fixtures/lineups',
   'games', 'games/statistics'
 ];
 

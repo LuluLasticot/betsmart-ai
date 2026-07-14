@@ -11,14 +11,20 @@ const TennisElo = (() => {
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
   const toks = (s) => norm(s).split(' ').filter((t) => t.length >= 3);
 
-  const srcs = (repo, file) => [
-    `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`,
-    `https://cdn.jsdelivr.net/gh/JeffSackmann/${repo}@master/${file}`
-  ];
+  // raw.githubusercontent n'envoie pas de CORS → on passe par des proxies CORS
+  // (allorigins/corsproxy), avec raw direct en dernier recours.
+  const srcs = (repo, file) => {
+    const raw = `https://raw.githubusercontent.com/JeffSackmann/${repo}/master/${file}`;
+    return [
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(raw)}`,
+      `https://corsproxy.io/?url=${encodeURIComponent(raw)}`,
+      raw
+    ];
+  };
   async function fetchText(urls) {
     for (const u of urls) {
       try {
-        const r = await fetch(u, { cache: 'force-cache' });
+        const r = await fetch(u);
         if (!r.ok) continue;
         const t = await r.text();
         if (t && t.length > 200) return t;

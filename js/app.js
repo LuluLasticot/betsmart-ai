@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v50';
+  const APP_VERSION = 'v51';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1743,7 +1743,7 @@
       if (!state.settings.apiFootballKey) {
         hint = 'Ajoutez votre clé api-sports.io dans les Réglages pour des faits réels (forme, buts, xG au foot, H2H).';
       } else if (facts && facts.noData) {
-        hint = `Données api-sports indisponibles pour ce match — ${escapeHTML(facts.reason || 'raison inconnue')}.`;
+        hint = `Données factuelles indisponibles pour ce match — ${escapeHTML(facts.reason || 'raison inconnue')}.`;
       } else {
         hint = 'Données api-sports indisponibles pour ce match.';
       }

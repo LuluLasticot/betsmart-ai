@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v62';
+  const APP_VERSION = 'v63';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -2569,14 +2569,20 @@
         </div>
       </div>
       <div class="panel"><div class="panel-head"><h2>Détail par ${escapeHTML(label.toLowerCase())}</h2></div>${anTableHTML(sorted, true, nameFmt)}</div>`;
-    anDoughnut('an_dist', top.map((r, i) => ({ name: r.name, value: r.count, color: PALETTE[i % PALETTE.length] })));
+    anDoughnut('an_dist', top.map((r, i) => ({ name: r.sport ? `${r.name} ${Analytics.sportIcon(r.sport)}` : r.name, value: r.count, color: PALETTE[i % PALETTE.length] })));
     anProfitBar('an_prof', top);
     bindAnTable();
     bindAnTopSelect();
   }
 
   const sportNameFmt = (name) => `<span class="an-flag">${Analytics.sportIcon(name)}</span><span class="an-comp-name">${escapeHTML(name)}</span>`;
-  const compNameFmt = (name, row) => `${row && row.flag ? `<span class="an-flag">${row.flag}</span>` : '<span class="an-flag an-flag-none">🎯</span>'}<span class="an-comp-name">${escapeHTML(name)}</span>${row && row.region ? `<span class="an-region">${escapeHTML(row.region)}</span>` : ''}`;
+  const compNameFmt = (name, row) => {
+    const sport = row && row.sport ? row.sport : '';
+    const sIcon = sport ? `<span class="an-flag an-sport-ico" title="${escapeHTML(sport)}">${Analytics.sportIcon(sport)}</span>` : '';
+    const flag = row && row.flag ? `<span class="an-flag">${row.flag}</span>` : '<span class="an-flag an-flag-none">•</span>';
+    const region = row && row.region ? `<span class="an-region">${escapeHTML(row.region)}</span>` : '';
+    return `${sIcon}${flag}<span class="an-comp-name">${escapeHTML(name)}</span>${region}`;
+  };
   const renderAnSport = (c, a) => renderAnDimension(c, a.bySport, 'Sport', sportNameFmt);
   const renderAnCompetition = (c, a) => renderAnDimension(c, a.byCompetition, 'Compétition', compNameFmt);
   const renderAnBookmaker = (c, a) => renderAnDimension(c, a.byBookmaker, 'Bookmaker');

@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v65';
+  const APP_VERSION = 'v66';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1330,6 +1330,7 @@
     });
     $('#settlePicks').addEventListener('click', settleRadarPicks);
     $('#loadComparator').addEventListener('click', loadComparator);
+    $('#loadFixtures').addEventListener('click', loadFixtureCalendar);
     // Clic sur « Analyser par le Radar » d'une ligne du comparateur → analyse approfondie du match
     $('#comparatorContent').addEventListener('click', (ev) => {
       const b = ev.target.closest('.cmp-analyze');
@@ -1356,7 +1357,7 @@
       const books = state.settings.onlyMyBooks !== false ? userBookNames() : null;
       const events = await Coteur.getUpcomingEvents(sport, { limit: 20, books });
       if (!events.length) {
-        container.innerHTML = '<div class="empty-state"><p>Aucun match trouvé — les proxies CORS publics sont peut-être temporairement bloqués. Réessayez dans un instant.</p></div>';
+        container.innerHTML = `<div class="empty-state"><p>Aucun match avec cotes pour ${escapeHTML(sport)} sur coteur en ce moment.</p><p class="empty-hint">Essayez « Calendrier IA » ci-dessus pour lister les matchs à venir (sans cotes) et les analyser.</p></div>`;
         return;
       }
       const withOdds = events.filter((e) => e.odds && (e.odds.home || e.odds.away));
@@ -1376,6 +1377,42 @@
         + `<p class="field-hint" style="margin-top:10px">${withOdds.length}/${events.length} matchs avec cotes · meilleure cote du marché FR affichée · source coteur.com</p>`;
     } catch (err) {
       container.innerHTML = `<div class="empty-state"><p>Comparateur indisponible : ${escapeHTML(err.message)}</p></div>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /** Calendrier « via IA » (sans cotes) : liste des vrais matchs à venir d'un sport,
+      utile quand coteur ne le couvre pas (badminton…). Chaque ligne → « Analyser ». */
+  async function loadFixtureCalendar() {
+    const sport = $('#comparatorSport').value;
+    const container = $('#comparatorContent');
+    const btn = $('#loadFixtures');
+    if (!state.settings.apiKey) { toast('Ajoutez votre clé API Gemini dans les Réglages pour le calendrier IA'); return; }
+    btn.disabled = true;
+    container.innerHTML = `<div class="coach-loading"><span class="spinner"></span>Recherche des matchs de ${escapeHTML(sport)} à venir (IA + Google, ~15 s)…</div>`;
+    try {
+      const now = new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
+      const matches = await Advisor.listFixtures(state.settings.apiKey, state.settings.model, { sport, horizon: 48, now });
+      if (!matches.length) {
+        container.innerHTML = `<div class="empty-state"><p>Aucun match de ${escapeHTML(sport)} trouvé dans les 48 prochaines heures.</p></div>`;
+        return;
+      }
+      container.innerHTML = `<div class="col-headers comparator-grid"><span>Match</span><span class="r">Quand</span></div>`
+        + matches.map((m) => {
+          const when = [m.date, m.heure].filter(Boolean).join(' · ');
+          return `<div class="bet-row comparator-grid fixture-row">
+            <div class="bet-main">
+              <div class="bet-event">${escapeHTML(m.match)}</div>
+              <div class="bet-meta">${escapeHTML(m.competition || sport)}</div>
+              <button class="cmp-analyze" data-q="${escapeHTML(m.match)}" data-comp="${escapeHTML(m.competition || '')}">◎ Analyser</button>
+            </div>
+            <div class="r bet-meta fixture-when">${escapeHTML(when || '—')}</div>
+          </div>`;
+        }).join('')
+        + `<p class="field-hint" style="margin-top:10px">Calendrier via recherche IA — <strong>sans cotes</strong>. Vérifiez avant de miser : cliquez « Analyser », puis saisissez votre cote (« ta cote ») pour la value et la mise.</p>`;
+    } catch (err) {
+      container.innerHTML = `<div class="empty-state"><p>Calendrier indisponible : ${escapeHTML(err.message)}</p></div>`;
     } finally {
       btn.disabled = false;
     }

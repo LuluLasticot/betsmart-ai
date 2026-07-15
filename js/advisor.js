@@ -364,6 +364,32 @@ Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ct
     return parsed;
   }
 
+  /* ------------------------------------------------------------------
+     Calendrier via recherche (sans cotes) — pour les sports peu/pas couverts
+     par coteur (badminton, etc.). Gemini + Google Search liste les vraies
+     rencontres à venir ; chacune devient cliquable « Analyser ».
+     ------------------------------------------------------------------ */
+  function fixturesPrompt(ctx) {
+    return `Tu es un assistant de recherche sportive. Date/heure actuelles : ${ctx.now} (Europe/Paris).
+Via Google Search, dresse la liste des rencontres de ${ctx.sport} RÉELLEMENT programmées (à venir ou tout juste commencées) dans les ${ctx.horizon} prochaines heures. Couvre les tournois/compétitions professionnels pertinents.
+Pour chaque match : les deux joueurs/équipes, la compétition/tournoi, la date et l'heure locale (Europe/Paris) si connues.
+N'INVENTE AUCUN match : chaque entrée doit provenir de ta recherche. En cas de doute, ne l'inclus pas.
+
+Termine par un unique bloc \`\`\`json :
+\`\`\`json
+{"matches":[{"competition":"...","match":"Joueur A – Joueur B","date":"YYYY-MM-DD","heure":"HH:MM"}]}
+\`\`\`
+Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {"matches":[]}.`;
+  }
+
+  async function listFixtures(apiKey, model, ctx) {
+    const raw = await callGemini(apiKey, model, fixturesPrompt(ctx), { temperature: 0.15 });
+    const parsed = extractJSON(raw);
+    return (parsed && Array.isArray(parsed.matches) ? parsed.matches : [])
+      .filter((m) => m && typeof m.match === 'string' && /[–—-]|vs/i.test(m.match))
+      .slice(0, 40);
+  }
+
   async function analyzeMatch(apiKey, model, ctx, query) {
     const raw = await callGemini(apiKey, ctx.deepModel || model, matchPrompt(ctx, query), { temperature: 0.25 });
     const parsed = extractJSON(raw);
@@ -468,5 +494,5 @@ Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ct
     };
   }
 
-  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, stakeFor, radarStats, feedbackBlock, PROFILES };
+  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats, feedbackBlock, PROFILES };
 })();

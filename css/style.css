@@ -777,6 +777,8 @@ kbd {
 /* Comparateur de cotes */
 .comparator-controls { display: flex; gap: 8px; }
 .comparator-grid, .col-headers.comparator-grid { grid-template-columns: minmax(0, 1fr) 72px 72px 72px; }
+.fixture-row.comparator-grid { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.fixture-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .cmp-odd { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
 .cmp-odd .v { font: 600 13px var(--mono); }
 .cmp-odd .b { font-size: 10px; color: var(--text-3); }

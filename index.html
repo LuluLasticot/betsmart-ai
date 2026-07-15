@@ -267,10 +267,13 @@
                 <option value="Basketball">Basketball</option>
                 <option value="Rugby">Rugby</option>
                 <option value="Baseball">Baseball</option>
+                <option value="Badminton">Badminton</option>
+                <option value="Hockey">Hockey</option>
+                <option value="Handball">Handball</option>
                 <option value="Boxe">Boxe</option>
                 <option value="Volleyball">Volleyball</option>
                 <option value="MMA">MMA</option>
-                <option value="Football, Tennis, Basketball, Rugby, Baseball, Boxe, Volleyball, MMA">Tous les sports</option>
+                <option value="Football, Tennis, Basketball, Rugby, Baseball, Badminton, Hockey, Handball, Boxe, Volleyball, MMA">Tous les sports</option>
               </select>
             </div>
             <div class="field">
@@ -313,9 +316,14 @@
 
         <div class="panel advisor-controls">
           <div class="match-analyze-row">
-            <input type="text" id="matchQuery" class="input" placeholder="Analyser un match précis — ex : PSG Marseille dimanche">
+            <input type="text" id="matchQuery" class="input" placeholder="Analyser un match — tape, colle une capture (⌘/Ctrl+V) ou importe-la">
+            <button class="btn-ghost btn-icon-lbl" id="analyzeImg" title="Importer / coller une capture de la rencontre" aria-label="Importer une capture">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+            </button>
+            <input type="file" id="matchImgInput" accept="image/*" hidden>
             <button class="btn-secondary" id="analyzeMatch">Analyser</button>
           </div>
+          <p class="match-analyze-hint" id="matchImgStatus" hidden></p>
         </div>
 
         <div class="panel" id="comparatorPanel">
@@ -328,6 +336,9 @@
                 <option value="Basketball">Basket</option>
                 <option value="Rugby">Rugby</option>
                 <option value="Baseball">Baseball</option>
+                <option value="Badminton">Badminton</option>
+                <option value="Hockey">Hockey</option>
+                <option value="Handball">Handball</option>
                 <option value="Boxe">Boxe</option>
                 <option value="Volleyball">Volley</option>
                 <option value="MMA">MMA</option>
@@ -577,7 +588,8 @@
             <datalist id="sportList">
               <option>Football</option><option>Tennis</option><option>Basketball</option>
               <option>Rugby</option><option>Hockey</option><option>MMA</option>
-              <option>Baseball</option><option>Handball</option><option>eSport</option>
+              <option>Baseball</option><option>Badminton</option><option>Volleyball</option>
+              <option>Handball</option><option>Boxe</option><option>eSport</option>
             </datalist>
           </div>
           <div class="field">

@@ -28,6 +28,7 @@ const Coteur = (() => {
     basketball: 'cotes-basket', basket: 'cotes-basket',
     rugby: 'cotes-rugby',
     baseball: 'cotes-baseball',
+    badminton: 'cotes-badminton',
     boxe: 'cotes-boxe', boxing: 'cotes-boxe',
     volley: 'cotes-volley', volleyball: 'cotes-volley',
     mma: 'cotes-mma',

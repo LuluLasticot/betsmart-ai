@@ -123,7 +123,7 @@ const Analytics = (() => {
     football: '⚽', foot: '⚽', soccer: '⚽', tennis: '🎾', basket: '🏀', basketball: '🏀',
     hockey: '🏒', baseball: '⚾', rugby: '🏉', volley: '🏐', volleyball: '🏐', hand: '🤾',
     handball: '🤾', cyclisme: '🚴', cycling: '🚴', mma: '🥊', boxe: '🥊', boxing: '🥊',
-    formule: '🏎️', f1: '🏎️', nfl: '🏈', golf: '⛳', flechettes: '🎯', darts: '🎯'
+    badminton: '🏸', formule: '🏎️', f1: '🏎️', nfl: '🏈', golf: '⛳', flechettes: '🎯', darts: '🎯'
   };
   function sportIcon(sport) {
     const s = String(sport || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[ -]/)[0];

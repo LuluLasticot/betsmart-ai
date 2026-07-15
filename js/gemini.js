@@ -72,6 +72,30 @@ Règles :
   }
 
   /* ------------------------------------------------------------------
+     Scan d'une rencontre à analyser (capture d'écran → requête d'analyse)
+     ------------------------------------------------------------------ */
+  const MATCH_SCAN_PROMPT = `Tu es un extracteur. À partir d'une capture d'écran (page de bookmaker, comparateur de cotes, calendrier, appli de paris…), identifie LA rencontre principale que l'utilisateur veut faire analyser. S'il y a plusieurs matchs, choisis celui qui est le plus mis en avant / sélectionné / au centre. Retourne UNIQUEMENT un objet JSON :
+
+{
+  "sport": "Football | Tennis | Basketball | Baseball | Badminton | Volleyball | Rugby | Hockey | Handball | Boxe | MMA … ou null",
+  "competition": "compétition / tournoi / championnat si visible, sinon null",
+  "home": "équipe ou joueur 1 (domicile / à gauche), sinon null",
+  "away": "équipe ou joueur 2 (extérieur / à droite), sinon null",
+  "date": "YYYY-MM-DD si visible, sinon null",
+  "time": "HH:MM si visible, sinon null",
+  "query": "libellé court prêt à analyser : 'Équipe A – Équipe B' (ajoute le jour/heure si visibles). Utilise des noms complets et lisibles."
+}
+
+Règles : ne renvoie que le JSON. Si tu ne reconnais aucune rencontre, mets tous les champs à null.`;
+
+  async function scanMatch(apiKey, model, base64Data, mimeType) {
+    return call(apiKey, model, [
+      { text: MATCH_SCAN_PROMPT },
+      { inlineData: { mimeType, data: base64Data } }
+    ]);
+  }
+
+  /* ------------------------------------------------------------------
      Coach IA — insights comportementaux
      ------------------------------------------------------------------ */
   const COACH_SCHEMA = {
@@ -160,5 +184,5 @@ Sois direct et exigeant mais bienveillant. Pas de généralités : chaque point 
     });
   }
 
-  return { scanTicket, coach, review, test, fileToBase64 };
+  return { scanTicket, scanMatch, coach, review, test, fileToBase64 };
 })();

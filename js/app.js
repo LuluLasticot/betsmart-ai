@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v64';
+  const APP_VERSION = 'v65';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -1317,6 +1317,17 @@
     $('#runAdvisor').addEventListener('click', runAdvisor);
     $('#analyzeMatch').addEventListener('click', runMatchAnalysis);
     $('#matchQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runMatchAnalysis(); } });
+    // Analyse depuis une capture d'écran : bouton d'import + collage direct dans le champ
+    $('#analyzeImg').addEventListener('click', () => $('#matchImgInput').click());
+    $('#matchImgInput').addEventListener('change', (e) => { const f = e.target.files?.[0]; if (f) handleMatchImage(f); e.target.value = ''; });
+    $('#matchQuery').addEventListener('paste', (e) => {
+      const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+      if (!item) return; // collage de texte normal
+      const f = item.getAsFile();
+      if (!f) return;
+      e.preventDefault(); e.stopPropagation();
+      handleMatchImage(f);
+    });
     $('#settlePicks').addEventListener('click', settleRadarPicks);
     $('#loadComparator').addEventListener('click', loadComparator);
     // Clic sur « Analyser par le Radar » d'une ligne du comparateur → analyse approfondie du match
@@ -1707,6 +1718,28 @@
   let lastMatchAnalysis = null; // { r, ctx } — pour recalculer les mises quand on change de profil Kelly
   let lastAnalyzeSport = null;  // sport du dernier match analysé (via comparateur) → matching des faits
   let lastAnalyzeComp = null;   // compétition du dernier match (surface tennis)
+
+  /** Capture d'écran d'une rencontre → extraction Gemini → champ d'analyse pré-rempli + lancement. */
+  async function handleMatchImage(file) {
+    const status = $('#matchImgStatus');
+    if (!state.settings.apiKey) { toast('Ajoutez votre clé API Gemini dans les Réglages pour lire une capture'); return; }
+    const show = (msg, err) => { if (status) { status.textContent = msg; status.hidden = false; status.classList.toggle('err', !!err); } };
+    show('Lecture de la capture…');
+    try {
+      const base64 = await Gemini.fileToBase64(file);
+      const d = await Gemini.scanMatch(state.settings.apiKey, state.settings.model, base64, file.type || 'image/png');
+      const q = (d && (d.query || [d.home, d.away].filter(Boolean).join(' – '))) || '';
+      if (!q || (!d.home && !d.away)) { show('Aucune rencontre reconnue sur l\'image — saisis le match à la main.', true); return; }
+      $('#matchQuery').value = d.time && !/\d{1,2}:\d{2}/.test(q) ? `${q} ${d.time}` : q;
+      lastAnalyzeSport = d.sport || null;      // route les faits (Elo tennis / api-sports / Poisson)
+      lastAnalyzeComp = d.competition || null; // surface tennis
+      show(`Reconnu : ${$('#matchQuery').value}${d.sport ? ' · ' + d.sport : ''}`);
+      setTimeout(() => { if (status) status.hidden = true; }, 4000);
+      runMatchAnalysis();
+    } catch (err) {
+      show(`Lecture impossible : ${err.message}`, true);
+    }
+  }
 
   async function runMatchAnalysis() {
     const query = $('#matchQuery').value.trim();

@@ -1082,7 +1082,12 @@ kbd {
   border-bottom: 1px solid var(--border);
 }
 .an-row .r { text-align: right; font-variant-numeric: tabular-nums; }
-.an-row .an-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-row .an-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 7px; min-width: 0; }
+.an-flag { flex: 0 0 auto; font-size: 15px; line-height: 1; }
+.an-flag-none { opacity: .45; font-size: 12px; }
+.an-comp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-region { flex: 0 0 auto; font-size: 10.5px; font-weight: 500; color: var(--text-3); background: var(--surface-2, rgba(255,255,255,.05)); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
+@media (max-width: 640px) { .an-region { display: none; } }
 .an-row .pos { color: var(--accent); }
 .an-row .neg { color: var(--red); }
 .an-sort { cursor: pointer; user-select: none; }

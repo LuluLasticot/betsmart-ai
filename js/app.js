@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v60';
+  const APP_VERSION = 'v61';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -2541,8 +2541,10 @@
     bindAnTopSelect();
   }
 
-  const renderAnSport = (c, a) => renderAnDimension(c, a.bySport, 'Sport');
-  const renderAnCompetition = (c, a) => renderAnDimension(c, a.byCompetition, 'Compétition');
+  const sportNameFmt = (name) => `<span class="an-flag">${Analytics.sportIcon(name)}</span><span class="an-comp-name">${escapeHTML(name)}</span>`;
+  const compNameFmt = (name, row) => `${row && row.flag ? `<span class="an-flag">${row.flag}</span>` : '<span class="an-flag an-flag-none">🎯</span>'}<span class="an-comp-name">${escapeHTML(name)}</span>${row && row.region ? `<span class="an-region">${escapeHTML(row.region)}</span>` : ''}`;
+  const renderAnSport = (c, a) => renderAnDimension(c, a.bySport, 'Sport', sportNameFmt);
+  const renderAnCompetition = (c, a) => renderAnDimension(c, a.byCompetition, 'Compétition', compNameFmt);
   const renderAnBookmaker = (c, a) => renderAnDimension(c, a.byBookmaker, 'Bookmaker');
 
   function renderAnType(c, a) {

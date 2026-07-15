@@ -25,8 +25,8 @@ const Analytics = (() => {
       .replace(/\s{2,}/g, ' ')
       .trim();
     const n = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-    // Tournois du Grand Chelem : on garde les tableaux distincts (ATP / WTA / mixte)
-    const MAJORS = new Set(['Wimbledon', 'Roland-Garros', 'US Open', "Open d'Australie"]);
+    // Tournois où les deux circuits jouent (souvent la même ville) → tableaux distincts ATP/WTA/mixte
+    const TOURSPLIT = new Set(['Wimbledon', 'Roland-Garros', 'US Open', "Open d'Australie", 'Båstad', 'Hambourg', 'Bucarest']);
     const ALIAS = [
       [/wimbledon/, 'Wimbledon'],
       [/roland[- ]?garros|french open/, 'Roland-Garros'],
@@ -35,10 +35,22 @@ const Analytics = (() => {
       [/gstaad|efg swiss open/, 'ATP Gstaad'],
       [/umag|plava laguna/, 'ATP Umag'],
       [/ath[eè]nes|athens/, 'WTA Athènes'],
+      [/b[aå]stad|nordea open/, 'Båstad'],
+      [/hambourg|hamburg|bett1open|european open.*hamburg/, 'Hambourg'],
+      [/bucarest|bucharest/, 'Bucarest'],
       [/ligue des champions|champions league|\bldc\b|uefa.*qualif/, 'Ligue des Champions'],
       [/ligue europa|europa league/, 'Ligue Europa'],
+      [/conference league|ligue.*conference/, 'Ligue Conférence'],
       [/coupe du monde|world cup|\bfifa\b|\bcdm\b/, 'Coupe du Monde'],
       [/ligue des nations|nations league/, 'Ligue des Nations'],
+      // Islande : l'élite masculine a été renommée Úrvalsdeild → Besta deild karla (même ligue)
+      [/urvalsdeild|besta[- ]?deild/, 'Besta deild karla'],
+      [/veikkausliiga/, 'Veikkausliiga'],
+      [/allsvenskan/, 'Allsvenskan'],
+      [/eliteserien/, 'Eliteserien'],
+      [/eredivisie/, 'Eredivisie'],
+      [/\bligapro\b|liga pro/, 'LigaPro'],
+      [/\bk league\b|k[- ]?league/, 'K League'],
       [/tour de france/, 'Tour de France']
     ];
     // Détecte le tableau (à partir du libellé brut, avant nettoyage)
@@ -46,9 +58,92 @@ const Analytics = (() => {
     const tour = /mixte|mixed/.test(rawN) ? ' (mixte)'
       : /\bwta\b|\bfemmes?\b|\bdames?\b|\bwomen\b|\bf\b/.test(rawN) ? ' (WTA)'
       : /\batp\b|\bhommes?\b|\bmessieurs\b|\bmen\b|\bh\b/.test(rawN) ? ' (ATP)' : '';
-    for (const [re, name] of ALIAS) if (re.test(n)) return MAJORS.has(name) ? name + tour : name;
+    for (const [re, name] of ALIAS) if (re.test(n)) return TOURSPLIT.has(name) ? name + tour : name;
     if (!s) return 'Autre';
     return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  /* ---- Métadonnées : drapeau pays / région + icône de sport ---- */
+  const FLAG = {
+    fr: '🇫🇷', gb: '🇬🇧', es: '🇪🇸', it: '🇮🇹', de: '🇩🇪', nl: '🇳🇱', pt: '🇵🇹', be: '🇧🇪', tr: '🇹🇷',
+    se: '🇸🇪', no: '🇳🇴', dk: '🇩🇰', fi: '🇫🇮', is: '🇮🇸', kr: '🇰🇷', jp: '🇯🇵', us: '🇺🇸', br: '🇧🇷',
+    ar: '🇦🇷', ec: '🇪🇨', pl: '🇵🇱', gr: '🇬🇷', hr: '🇭🇷', ch: '🇨🇭', at: '🇦🇹', ro: '🇷🇴', au: '🇦🇺',
+    ca: '🇨🇦', mx: '🇲🇽', eu: '🇪🇺', world: '🌍'
+  };
+  // Ordre important : les motifs spécifiques d'abord.
+  const COMP_META = [
+    // Tennis — pays hôte du tournoi
+    [/wimbledon/, 'gb', 'Angleterre'],
+    [/roland[- ]?garros/, 'fr', 'France'],
+    [/\bus open\b/, 'us', 'États-Unis'],
+    [/open d.?australie|australian open/, 'au', 'Australie'],
+    [/gstaad/, 'ch', 'Suisse'],
+    [/umag/, 'hr', 'Croatie'],
+    [/b[aå]stad/, 'se', 'Suède'],
+    [/ath[eè]nes|athens/, 'gr', 'Grèce'],
+    [/hambourg|hamburg/, 'de', 'Allemagne'],
+    [/kitzbuhel|kitzbuhel/, 'at', 'Autriche'],
+    [/bucarest|bucharest/, 'ro', 'Roumanie'],
+    [/newport/, 'us', 'États-Unis'],
+    // Football — compétitions européennes / internationales
+    [/ligue des champions/, 'eu', 'Europe'],
+    [/ligue europa|ligue conference|conference/, 'eu', 'Europe'],
+    [/ligue des nations/, 'eu', 'Europe'],
+    [/coupe du monde/, 'world', 'International'],
+    // Football — championnats nationaux (motifs sûrs)
+    [/ligue 1|ligue 2/, 'fr', 'France'],
+    [/premier league|championship/, 'gb', 'Angleterre'],
+    [/laliga|\bliga\b(?!.*pro)/, 'es', 'Espagne'],
+    [/bundesliga/, 'de', 'Allemagne'],
+    [/eredivisie/, 'nl', 'Pays-Bas'],
+    [/primeira|liga portugal/, 'pt', 'Portugal'],
+    [/allsvenskan/, 'se', 'Suède'],
+    [/eliteserien/, 'no', 'Norvège'],
+    [/veikkausliiga/, 'fi', 'Finlande'],
+    [/besta deild|urvalsdeild/, 'is', 'Islande'],
+    [/k league/, 'kr', 'Corée du Sud'],
+    [/\bmls\b/, 'us', 'États-Unis'],
+    [/ligapro/, 'ec', 'Équateur'],
+    [/ekstraklasa/, 'pl', 'Pologne'],
+    // Basket / hockey / baseball nord-américains
+    [/\bwnba\b|\bnba\b/, 'us', 'États-Unis'],
+    [/euroligue|euroleague/, 'eu', 'Europe'],
+    [/\bnhl\b/, 'ca', 'Amérique du Nord'],
+    [/\bmlb\b/, 'us', 'États-Unis'],
+    // Cyclisme
+    [/tour de france/, 'fr', 'France']
+  ];
+  function compMeta(name) {
+    const n = String(name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    for (const [re, cc, region] of COMP_META) if (re.test(n)) return { flag: FLAG[cc] || '', region };
+    return { flag: '', region: '' };
+  }
+
+  const SPORT_ICON = {
+    football: '⚽', foot: '⚽', soccer: '⚽', tennis: '🎾', basket: '🏀', basketball: '🏀',
+    hockey: '🏒', baseball: '⚾', rugby: '🏉', volley: '🏐', volleyball: '🏐', hand: '🤾',
+    handball: '🤾', cyclisme: '🚴', cycling: '🚴', mma: '🥊', boxe: '🥊', boxing: '🥊',
+    formule: '🏎️', f1: '🏎️', nfl: '🏈', golf: '⛳', flechettes: '🎯', darts: '🎯'
+  };
+  function sportIcon(sport) {
+    const s = String(sport || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[ -]/)[0];
+    return SPORT_ICON[s] || '🎯';
+  }
+
+  /* ---- Regroupement par compétition : clé = sport + compétition (jamais de fusion inter-sport),
+         + drapeau/région pour l'affichage. ---- */
+  function groupByCompetition(bets) {
+    const map = new Map();
+    for (const b of bets) {
+      const canon = canonComp(b.competition);
+      const sport = (b.sport || '—').toString().trim() || '—';
+      const key = sport.toLowerCase() + '||' + canon.toLowerCase();
+      if (!map.has(key)) map.set(key, { name: canon, sport, set: [] });
+      map.get(key).set.push(b);
+    }
+    return [...map.values()]
+      .map((o) => ({ name: o.name, sport: o.sport, ...compMeta(o.name), ...block(o.set) }))
+      .sort((a, b) => b.count - a.count);
   }
 
   /** Bloc de stats pour un ensemble de paris. */
@@ -195,7 +290,7 @@ const Analytics = (() => {
       ].filter((d) => d.value > 0),
       bySport: groupBy(settled, (b) => b.sport, (name, set) => ({ byLeague: groupBy(set, (b) => canonComp(b.competition)) })),
       byBookmaker: groupBy(settled, (b) => b.bookmaker),
-      byCompetition: groupBy(settled, (b) => canonComp(b.competition), (name, set) => ({ sport: set[0]?.sport })),
+      byCompetition: groupByCompetition(settled),
       byType: groupBy(settled, (b) => ({ simple: 'Simple', combine: 'Combiné', systeme: 'Système' }[b.betType] || b.betType)),
       byTipster: groupBy(settled.filter((b) => b.tipster), (b) => b.tipster),
       byStakeRange: byRange(settled, STAKE_RANGES, 'stake'),
@@ -234,5 +329,5 @@ const Analytics = (() => {
 
   const round1 = (n) => Math.round(n * 10) / 10;
 
-  return { compute, reviewSummary, block };
+  return { compute, reviewSummary, block, canonComp, compMeta, sportIcon };
 })();

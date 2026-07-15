@@ -1086,6 +1086,9 @@ kbd {
 .an-flag { flex: 0 0 auto; font-size: 15px; line-height: 1; }
 .an-flag-none { opacity: .45; font-size: 12px; }
 .an-sport-ico { font-size: 13px; opacity: .9; }
+.bets-totals { color: var(--text-3); }
+.bets-totals strong { color: var(--text-2); font-weight: 600; }
+@media (max-width: 560px) { .bets-totals { display: block; margin-top: 2px; } }
 .an-comp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-region { flex: 0 0 auto; font-size: 10.5px; font-weight: 500; color: var(--text-3); background: var(--surface-2, rgba(255,255,255,.05)); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; }
 @media (max-width: 640px) { .an-region { display: none; } }

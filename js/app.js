@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v63';
+  const APP_VERSION = 'v64';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -539,7 +539,7 @@
   /* ========================================================================
      Liste des paris
      ======================================================================== */
-  const FILTER_IDS = ['filterStatus', 'filterSport', 'filterBookmaker', 'filterType', 'filterTipster'];
+  const FILTER_IDS = ['filterStatus', 'filterSport', 'filterCompetition', 'filterBookmaker', 'filterType', 'filterTipster'];
 
   function bindFilters() {
     FILTER_IDS.forEach((id) =>
@@ -563,6 +563,12 @@
 
   function refreshFilterOptions() {
     fillOptions('#filterSport', 'Sport · tous', [...new Set(state.bets.map((b) => b.sport).filter(Boolean))].sort());
+    // Compétitions canoniques (dé-doublonnées), en respectant le filtre sport actif
+    const compSport = $('#filterSport') ? $('#filterSport').value : '';
+    const comps = [...new Set(state.bets
+      .filter((b) => b.competition && (!compSport || b.sport === compSport))
+      .map((b) => Analytics.canonComp(b.competition)))].sort((a, b) => a.localeCompare(b));
+    fillOptions('#filterCompetition', 'Compétition · toutes', comps);
     fillOptions('#filterBookmaker', 'Bookmaker · tous', [...new Set(state.bets.map((b) => b.bookmaker).filter(Boolean))].sort());
     const tipsters = [...new Set(state.bets.map((b) => b.tipster).filter(Boolean))].sort();
     $('#filterTipster').parentElement && ($('#filterTipster').style.display = tipsters.length ? '' : 'none');
@@ -580,6 +586,7 @@
   function filteredBets() {
     const status = $('#filterStatus').value;
     const sport = $('#filterSport').value;
+    const competition = $('#filterCompetition').value;
     const bookmaker = $('#filterBookmaker').value;
     const type = $('#filterType').value;
     const tipster = $('#filterTipster').value;
@@ -588,6 +595,7 @@
     return state.bets.filter((b) =>
       (!status || b.status === status) &&
       (!sport || b.sport === sport) &&
+      (!competition || Analytics.canonComp(b.competition) === competition) &&
       (!bookmaker || b.bookmaker === bookmaker) &&
       (!type || b.betType === type) &&
       (!tipster || b.tipster === tipster) &&
@@ -613,7 +621,10 @@
     refreshFilterOptions();
     const bets = sortByPhase(filteredBets());
     const k = Stats.kpis(bets, 0);
-    $('#betsCount').textContent = `${bets.length} paris · ${Stats.fmtSigned(k.profit)} de profit sur la sélection`;
+    const staked = bets.reduce((s, b) => s + Number(b.stake || 0), 0);
+    const expected = bets.reduce((s, b) => s + Number(b.stake || 0) * Number(b.odds || 0), 0);
+    $('#betsCount').innerHTML = `${bets.length} paris · ${Stats.fmtSigned(k.profit)} de profit`
+      + `<span class="bets-totals"> · misé <strong>${Stats.fmtMoney(staked)}</strong> · retour si tout gagné <strong>${Stats.fmtMoney(expected)}</strong></span>`;
 
     const pages = Math.max(1, Math.ceil(bets.length / BETS_PER_PAGE));
     if (state.betsPage > pages) state.betsPage = pages;

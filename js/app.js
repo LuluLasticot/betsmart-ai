@@ -20,7 +20,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v61';
+  const APP_VERSION = 'v62';
 
   /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
   function effInitial() {
@@ -953,9 +953,7 @@
     $('#betModal').addEventListener('click', (e) => { if (e.target === $('#betModal')) closeBetModal(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#betModal').hidden) closeBetModal(); });
 
-    $('#fType').addEventListener('change', () => {
-      $('#legsField').hidden = $('#fType').value === 'simple';
-    });
+    $('#fType').addEventListener('change', syncLegsField);
     $('#fStatus').addEventListener('change', () => {
       $('#payoutField').hidden = $('#fStatus').value !== 'cashout';
     });
@@ -1027,6 +1025,7 @@
     $('#betModal').hidden = false;
     document.body.style.overflow = 'hidden';
     refreshBookmakerDatalist();
+    refreshCompetitionDatalist();
     $('#betModalTitle').textContent = bet ? 'Modifier le pari' : 'Nouveau pari';
     $('#saveBet').textContent = bet ? 'Enregistrer' : 'Valider le pari';
     resetScanUI();
@@ -1042,8 +1041,8 @@
     $('#fEvent').value = bet?.event || '';
     $('#fSelection').value = bet?.selection || '';
     $('#fType').value = bet?.betType || 'simple';
-    $('#fLegs').value = bet?.legs || 2;
-    $('#legsField').hidden = ($('#fType').value === 'simple');
+    $('#fLegs').value = bet?.legs && bet.legs > 1 ? bet.legs : 2;
+    syncLegsField();
     $('#fOdds').value = bet?.odds ?? '';
     $('#fStake').value = bet?.stake ?? '';
     $('#fTipster').value = bet?.tipster || '';
@@ -1059,6 +1058,41 @@
     const defaults = ['Winamax', 'Betclic', 'Unibet', 'ParionsSport', 'PMU', 'Zebet', 'Bwin', 'PokerStars Sports', 'Olybet'];
     const all = [...new Set([...mine, ...defaults])];
     $('#bookmakerList').innerHTML = all.map((n) => `<option>${escapeHTML(n)}</option>`).join('');
+  }
+
+  /** Un pari simple n'a qu'une sélection : on masque ET désactive le champ « Nb de
+      sélections » (désactivé = exclu de la validation HTML, donc ne bloque plus l'envoi). */
+  function syncLegsField() {
+    const simple = $('#fType').value === 'simple';
+    $('#legsField').hidden = simple;
+    const legs = $('#fLegs');
+    legs.disabled = simple;
+    if (simple && !(parseInt(legs.value, 10) >= 2)) legs.value = 2;
+  }
+
+  /** Liste des compétitions : celles déjà saisies (les plus fréquentes en tête) + un socle courant. */
+  const COMMON_COMPS = [
+    'Ligue 1', 'Ligue 2', 'Premier League', 'Championship', 'LaLiga', 'Serie A', 'Bundesliga',
+    'Eredivisie', 'Liga Portugal', 'Jupiler Pro League', 'Süper Lig', 'Ligue des Champions',
+    'Ligue Europa', 'Ligue Conférence', 'Ligue des Nations', 'Coupe du Monde', 'Euro',
+    'Copa America', 'MLS', 'Brasileirão', 'Liga Argentina', 'Allsvenskan', 'Eliteserien',
+    'Veikkausliiga', 'K League 1', 'J1 League', 'Saudi Pro League',
+    'Wimbledon', 'Roland-Garros', 'US Open', "Open d'Australie", 'Masters 1000', 'ATP 500', 'ATP 250', 'WTA 1000', 'WTA 500', 'WTA 250',
+    'NBA', 'WNBA', 'EuroLigue', 'Betclic Élite', 'NHL', 'MLB', 'Top 14', 'Champions Cup', 'Tour de France'
+  ];
+  function refreshCompetitionDatalist() {
+    const el = $('#competitionList');
+    if (!el) return;
+    // Compétitions déjà utilisées, triées par fréquence décroissante
+    const freq = new Map();
+    for (const b of state.bets) {
+      const c = (b.competition || '').trim();
+      if (c) freq.set(c, (freq.get(c) || 0) + 1);
+    }
+    const used = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    const seen = new Set(used.map((c) => c.toLowerCase()));
+    const extra = COMMON_COMPS.filter((c) => !seen.has(c.toLowerCase()));
+    el.innerHTML = [...used, ...extra].map((c) => `<option value="${escapeHTML(c)}"></option>`).join('');
   }
 
   function closeBetModal() {
@@ -1202,8 +1236,8 @@
     setField('#fSelection', d.selection);
     if (['simple', 'combine', 'systeme'].includes(d.betType)) {
       setField('#fType', d.betType);
-      $('#legsField').hidden = d.betType === 'simple';
       if (d.legs > 1) setField('#fLegs', d.legs);
+      syncLegsField();
     }
     if (typeof d.odds === 'number' && d.odds > 1) setField('#fOdds', d.odds);
     if (typeof d.stake === 'number' && d.stake > 0) setField('#fStake', d.stake);
@@ -2115,7 +2149,7 @@
     $('#fEvent').value = p.match || '';
     $('#fSelection').value = p.selection || '';
     $('#fType').value = 'simple';
-    $('#legsField').hidden = true;
+    syncLegsField();
     $('#fOdds').value = p.cote || '';
     $('#fStake').value = stake || '';
     $('#fTipster').value = 'Radar IA';

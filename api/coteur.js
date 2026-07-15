@@ -17,7 +17,9 @@ const crypto = require('crypto');
 const COTEUR = 'https://www.coteur.com';
 const ODDS_API = 'https://oddsv2.coteur.com/odds/getFullOdds';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36';
-const ALLOWED_PAGES = new Set(['cotes-foot', 'cotes-tennis', 'cotes-basket', 'cotes-rugby', 'cotes-handball', 'cotes-volley', 'cotes-hockey']);
+// Toute page de cotes coteur (slug « cotes-… ») est autorisée. Regex stricte =
+// aucune traversée possible, et plus de liste figée à maintenir sport par sport.
+const PAGE_RE = /^cotes-[a-z0-9-]{2,20}$/;
 
 /* ---- Token AES quotidien, format OpenSSL (compatible CryptoJS.AES) ---- */
 function evpBytesToKey(passphrase, salt, keyLen, ivLen) {
@@ -56,7 +58,7 @@ module.exports = async (req, res) => {
     }
 
     if (type === 'list') {
-      if (!ALLOWED_PAGES.has(page)) return res.status(400).json({ ok: false, error: 'page invalide' });
+      if (!PAGE_RE.test(page)) return res.status(400).json({ ok: false, error: 'page invalide' });
       const r = await fetch(`${COTEUR}/${page}`, {
         headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR,fr;q=0.9', 'Accept': 'text/html' }
       });

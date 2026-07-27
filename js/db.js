@@ -180,6 +180,27 @@ const DB = (() => {
     return data.bets.length;
   }
 
+  /** Réglages propres à l'appareil (clés d'API, préférences d'affichage) :
+      conservés lors d'un changement de compte, contrairement aux données de jeu. */
+  const DEVICE_SETTINGS = ['apiKey', 'apiFootballKey', 'oddsApiKey', 'githubToken', 'model', 'notifyAlerts'];
+
+  /** Efface toutes les données DE COMPTE (paris, transactions, picks, réglages de
+      bankroll…). Utilisé au changement d'utilisateur pour garantir des comptes
+      strictement indépendants. Les réglages d'appareil sont préservés. */
+  async function clearAccountData() {
+    const d = await open();
+    const keep = {};
+    for (const k of DEVICE_SETTINGS) {
+      const v = await getSetting(k);
+      if (v !== undefined && v !== null) keep[k] = v;
+    }
+    await reqToPromise(d.transaction('bets', 'readwrite').objectStore('bets').clear());
+    await reqToPromise(d.transaction('picks', 'readwrite').objectStore('picks').clear());
+    await reqToPromise(d.transaction('transactions', 'readwrite').objectStore('transactions').clear());
+    await reqToPromise(d.transaction('settings', 'readwrite').objectStore('settings').clear());
+    for (const [k, v] of Object.entries(keep)) await setSetting(k, v, { silent: true });
+  }
+
   async function wipe() {
     await clearBets();
     const d = await open();
@@ -193,6 +214,6 @@ const DB = (() => {
     getTransactions, saveTransaction, deleteTransaction,
     getPicks, savePick, deletePick,
     getSetting, setSetting, getAllSettings,
-    exportAll, importAll, wipe, hooks
+    exportAll, importAll, wipe, clearAccountData, hooks
   };
 })();

@@ -12,7 +12,7 @@
 
 const Cloud = (() => {
   const SDK = 'https://www.gstatic.com/firebasejs/11.6.1';
-  const SYNCED_SETTINGS = ['initialBankroll', 'bookrolls', 'model', 'apiKey', 'oddsApiKey', 'apiFootballKey', 'oddsSource', 'onlyMyBooks', 'stakingMode', 'maxExposurePct', 'notifyAlerts'];
+  const SYNCED_SETTINGS = ['initialBankroll', 'bookrolls', 'model', 'apiKey', 'oddsApiKey', 'apiFootballKey', 'oddsSource', 'onlyMyBooks', 'stakingMode', 'maxExposurePct', 'notifyAlerts', 'currency', 'showEurEquiv'];
 
   let mods = null;          // modules firebase importés
   let auth = null;
@@ -64,15 +64,49 @@ const Cloud = (() => {
       m.onAuthStateChanged(auth, async (u) => {
         user = u;
         stopSync();
+        // Isolation stricte des comptes : les données locales d'un autre compte
+        // ne doivent JAMAIS être fusionnées dans le compte courant.
+        await enforceAccountIsolation(u);
         if (u) {
           onStatus?.({ state: 'connected', email: u.email });
           await startSync();
         } else {
           onStatus?.({ state: 'signedout' });
+          onChange?.();
         }
       });
     } catch (err) {
       onStatus?.({ state: 'error', message: err.message });
+    }
+  }
+
+  /* ------------------------------------------------------------------
+     Isolation des comptes
+     Le stockage local (IndexedDB) est commun à l'appareil. Sans garde-fou,
+     les paris d'un compte seraient poussés dans le compte suivant lors de la
+     fusion initiale. On mémorise donc l'UID propriétaire des données locales :
+       - même UID          → rien à faire (reprise de session)
+       - UID différent     → on efface les données locales avant toute synchro
+       - déconnexion       → on efface (les données sont dans le cloud)
+       - aucun UID connu   → première connexion : on migre le local vers le compte
+     ------------------------------------------------------------------ */
+  const OWNER_KEY = 'betsmart.dataOwnerUid';
+  const owner = {
+    get: () => { try { return localStorage.getItem(OWNER_KEY); } catch (_) { return null; } },
+    set: (v) => { try { v ? localStorage.setItem(OWNER_KEY, v) : localStorage.removeItem(OWNER_KEY); } catch (_) {} }
+  };
+
+  async function enforceAccountIsolation(u) {
+    const prev = owner.get();
+    if (u) {
+      if (prev && prev !== u.uid) {
+        await DB.clearAccountData();   // compte différent → repartir d'une base vide
+        onChange?.();
+      }
+      owner.set(u.uid);
+    } else if (prev) {
+      await DB.clearAccountData();     // déconnexion → ne rien laisser sur l'appareil
+      owner.set(null);
     }
   }
 

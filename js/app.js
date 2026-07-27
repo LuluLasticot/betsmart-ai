@@ -8,11 +8,16 @@
   const $$ = (sel) => [...document.querySelectorAll(sel)];
 
   /* ---- État ---- */
+  const DEFAULT_SETTINGS = () => ({
+    initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', githubToken: '',
+    oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly',
+    maxExposurePct: 25, notifyAlerts: false, currency: 'EUR', showEurEquiv: true
+  });
   const state = {
     bets: [],
     txs: [],
     picks: [],
-    settings: { initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', githubToken: '', oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly', maxExposurePct: 25, notifyAlerts: false },
+    settings: DEFAULT_SETTINGS(),
     period: 'all',
     view: 'dashboard',
     charts: {},
@@ -20,12 +25,28 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v66';
+  const APP_VERSION = 'v67';
 
-  /** Capital initial effectif : somme des capitaux par bookmaker si définis, sinon le capital global. */
+  /** Devises déclarées sur les bookmakers (pour précharger les cours). */
+  const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
+
+  /** Devise d'un bookmaker (par son nom) — sert à la saisie des montants. */
+  function bookCurrency(name) {
+    const n = String(name || '').trim().toLowerCase();
+    const b = (state.settings.bookrolls || []).find((x) => (x.name || '').trim().toLowerCase() === n);
+    return (b && b.currency) || state.settings.currency || 'EUR';
+  }
+
+  /** Capital initial effectif, exprimé dans la devise principale (conversion si besoin). */
   function effInitial() {
+    const main = state.settings.currency || 'EUR';
     const br = (state.settings.bookrolls || []).filter((b) => b.name && b.name.trim());
-    return br.length ? br.reduce((s, b) => s + (Number(b.initial) || 0), 0) : (Number(state.settings.initialBankroll) || 0);
+    if (!br.length) return Number(state.settings.initialBankroll) || 0;
+    return br.reduce((s, b) => {
+      const v = Number(b.initial) || 0;
+      const conv = Money.convert(v, b.currency || main, main);
+      return s + (conv === null ? v : conv); // cours indisponible → valeur brute
+    }, 0);
   }
 
   const STATUS_LABELS = { pending: 'En attente', won: 'Gagné', lost: 'Perdu', void: 'Annulé', cashout: 'Cash out' };
@@ -37,6 +58,8 @@
   async function init() {
     const saved = await DB.getAllSettings();
     Object.assign(state.settings, saved);
+    Money.setCurrency(state.settings.currency, state.settings.showEurEquiv);
+    Money.ensureRates(bookCurrencies()).then(() => { applyCurrencyUI(); renderAll(); }).catch(() => {});
     [state.bets, state.txs, state.picks] = await Promise.all([DB.getBets(), DB.getTransactions(), DB.getPicks()]);
 
     bindNav();
@@ -64,7 +87,10 @@
     Cloud.init({
       onChange: async () => {
         const saved = await DB.getAllSettings();
-        Object.assign(state.settings, saved);
+        // Repartir des valeurs par défaut : au changement de compte, les réglages
+        // de l'ancien compte (bankroll, books…) ne doivent pas persister en mémoire.
+        state.settings = Object.assign(DEFAULT_SETTINGS(), saved);
+        Money.setCurrency(state.settings.currency, state.settings.showEurEquiv);
         [state.bets, state.txs, state.picks] = await Promise.all([DB.getBets(), DB.getTransactions(), DB.getPicks()]);
         renderRadarPerf();
         bindSettingsValues();
@@ -389,7 +415,9 @@
 
   function renderSidebarBankroll() {
     const k = Stats.kpis(state.bets, effInitial(), state.txs);
-    $('#sidebarBankroll').textContent = Stats.fmtMoney(k.bankroll);
+    const brEur = Money.eurHint(k.bankroll);
+    $('#sidebarBankroll').innerHTML = escapeHTML(Stats.fmtMoney(k.bankroll))
+      + (brEur ? `<span class="bankroll-eur">${escapeHTML(brEur)}</span>` : '');
     $('#sidebarBankroll').style.color = k.profit > 0 ? 'var(--accent)' : k.profit < 0 ? 'var(--red)' : 'var(--text)';
   }
 
@@ -864,8 +892,23 @@
     $('#onboardModal').hidden = false;
     document.body.style.overflow = 'hidden';
 
+    // Devise dès l'onboarding (euro ou crypto d'un book type Stake)
+    const obCur = $('#obCurrency');
+    obCur.innerHTML = Object.entries(Money.CURRENCIES)
+      .map(([code, m]) => `<option value="${code}">${m.label} (${code === 'EUR' ? '€' : m.symbol})</option>`).join('');
+    obCur.value = state.settings.currency || 'EUR';
+    obCur.addEventListener('change', () => {
+      Money.setCurrency(obCur.value, state.settings.showEurEquiv);
+      state.settings.currency = obCur.value;
+      applyCurrencyUI();
+    });
+
     $('#onboardForm').addEventListener('submit', async (e) => {
       e.preventDefault();
+      state.settings.currency = obCur.value || 'EUR';
+      await DB.setSetting('currency', state.settings.currency);
+      Money.setCurrency(state.settings.currency, state.settings.showEurEquiv);
+      await Money.ensureRates([state.settings.currency]);
       state.settings.initialBankroll = parseFloat($('#obBankroll').value) || 0;
       await DB.setSetting('initialBankroll', state.settings.initialBankroll);
       const key = $('#obApiKey').value.trim();
@@ -877,6 +920,7 @@
       $('#onboardModal').hidden = true;
       document.body.style.overflow = '';
       bindSettingsValues();
+      applyCurrencyUI();
       renderAll();
       toast('Bienvenue ! Ajoutez votre premier pari avec le bouton +');
     }, { once: true });
@@ -969,6 +1013,9 @@
       $('#payoutField').hidden = $('#fStatus').value !== 'cashout';
     });
     ['fOdds', 'fStake'].forEach((id) => $(`#${id}`).addEventListener('input', updatePotentialGain));
+    // Saisie dans la devise du bookmaker (ex. Stake en BTC) → conversion à l'enregistrement
+    $('#fBookmaker').addEventListener('input', updateStakeFxHint);
+    $('#fStake').addEventListener('input', updateStakeFxHint);
 
     $('#betForm').addEventListener('submit', onSaveBet);
 
@@ -1061,6 +1108,7 @@
     $('#fPayout').value = bet?.payout ?? '';
     $('#payoutField').hidden = $('#fStatus').value !== 'cashout';
     updatePotentialGain();
+    updateStakeFxHint();
   }
 
   /** Vos books configurés apparaissent en tête des suggestions du formulaire. */
@@ -1111,6 +1159,26 @@
     document.body.style.overflow = '';
   }
 
+  /** Devise de saisie du formulaire : celle du book choisi, uniquement pour un NOUVEAU pari
+      (un pari existant est déjà stocké dans la devise principale). */
+  function entryCurrency() {
+    if ($('#betId').value) return state.settings.currency || 'EUR';
+    return bookCurrency($('#fBookmaker').value);
+  }
+
+  function updateStakeFxHint() {
+    const el = $('#stakeFxHint');
+    if (!el) return;
+    const main = state.settings.currency || 'EUR';
+    const code = entryCurrency();
+    if (code === main) { el.hidden = true; return; }
+    const v = parseFloat($('#fStake').value);
+    const conv = isFinite(v) ? Money.convert(v, code, main) : null;
+    el.hidden = false;
+    el.innerHTML = `Ce bookmaker est en <strong>${escapeHTML(code)}</strong> — saisissez la mise en ${escapeHTML(code)}.`
+      + (conv !== null && isFinite(conv) ? ` Enregistrée comme <strong>${escapeHTML(Money.fmt(conv, main))}</strong> (cours du jour).` : '');
+  }
+
   function updatePotentialGain() {
     const odds = parseFloat($('#fOdds').value);
     const stake = parseFloat($('#fStake').value);
@@ -1143,6 +1211,21 @@
       status: $('#fStatus').value,
       payout: $('#fStatus').value === 'cashout' ? (parseFloat($('#fPayout').value) || 0) : undefined
     };
+
+    // Devise : les montants sont stockés dans la devise principale. Si le book est
+    // dans une autre devise (ex. Stake en BTC), on convertit au cours du jour.
+    const mainCur = state.settings.currency || 'EUR';
+    const entryCur = entryCurrency();
+    if (entryCur !== mainCur) {
+      const cs = Money.convert(bet.stake, entryCur, mainCur);
+      const cp = bet.payout != null ? Money.convert(bet.payout, entryCur, mainCur) : null;
+      if (cs !== null && isFinite(cs)) {
+        bet.stake = Math.round(cs * 1e6) / 1e6;
+        bet.enteredAmount = parseFloat($('#fStake').value) || 0;   // trace de la saisie d'origine
+        bet.enteredCurrency = entryCur;
+        if (cp !== null && isFinite(cp)) bet.payout = Math.round(cp * 1e6) / 1e6;
+      }
+    }
 
     // Heure saisie prioritaire : elle définit le coup d'envoi (sinon on garde le kickoff hérité d'un pick).
     if (bet.time && /^\d{1,2}:\d{2}$/.test(bet.time)) {
@@ -2405,6 +2488,30 @@
       toast(state.settings.onlyMyBooks ? 'Value limitée à vos bookmakers' : 'Tous les bookmakers considérés');
     });
 
+    // Devise principale : tout le site s'affiche dedans
+    const curSel = $('#setCurrency');
+    curSel.innerHTML = Object.entries(Money.CURRENCIES)
+      .map(([code, m]) => `<option value="${code}">${m.label} (${code === 'EUR' ? '€' : m.symbol})</option>`).join('');
+    curSel.addEventListener('change', async () => {
+      const code = curSel.value;
+      state.settings.currency = code;
+      await DB.setSetting('currency', code);
+      Money.setCurrency(code, state.settings.showEurEquiv);
+      await Money.ensureRates(bookCurrencies());
+      applyCurrencyUI();
+      renderBookrollRows();
+      renderAll();
+      renderTxList();
+      toast(`Devise : ${Money.CURRENCIES[code].label}`);
+    });
+    $('#setEurEquiv').addEventListener('change', async () => {
+      state.settings.showEurEquiv = $('#setEurEquiv').checked;
+      await DB.setSetting('showEurEquiv', state.settings.showEurEquiv);
+      Money.setCurrency(state.settings.currency, state.settings.showEurEquiv);
+      renderBookrollRows();
+      renderAll();
+    });
+
     $('#setNotifyAlerts').addEventListener('change', async () => {
       const on = $('#setNotifyAlerts').checked;
       if (on) {
@@ -2505,6 +2612,9 @@
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;
     $('#setNotifyAlerts').checked = state.settings.notifyAlerts === true && Notify.supported() && Notification.permission === 'granted';
+    $('#setCurrency').value = state.settings.currency || 'EUR';
+    $('#setEurEquiv').checked = state.settings.showEurEquiv !== false;
+    applyCurrencyUI();
     $('#setStaking').value = state.settings.stakingMode || 'kelly';
     $('#setMaxExposure').value = state.settings.maxExposurePct || 25;
     $('#setModel').value = state.settings.model;
@@ -2535,14 +2645,31 @@
       : 'Point de départ du calcul du ROC et du graphique d\'évolution.';
   }
 
+  /** Répercute la devise principale sur les libellés « (€) » et les blocs liés. */
+  function applyCurrencyUI() {
+    const code = state.settings.currency || 'EUR';
+    const sym = code === 'EUR' ? '€' : Money.info(code).symbol;
+    $$('.cur-label').forEach((el) => { el.textContent = sym; });
+    const f = $('#eurEquivField');
+    if (f) f.hidden = !Money.isCrypto(code);
+  }
+
   function renderBookrollRows() {
     const rows = state.settings.bookrolls || [];
     $('#bookrollRows').innerHTML = rows.length
-      ? rows.map((b, i) => `<div class="bookroll-row" data-i="${i}">
+      ? rows.map((b, i) => {
+        const cur = b.currency || state.settings.currency || 'EUR';
+        const opts = Object.entries(Money.CURRENCIES)
+          .map(([code, m]) => `<option value="${code}"${code === cur ? ' selected' : ''}>${code === 'EUR' ? '€' : m.symbol}</option>`).join('');
+        const eq = Money.isCrypto(cur) ? Money.eurHint(Number(b.initial) || 0, cur) : '';
+        return `<div class="bookroll-row" data-i="${i}">
           <input type="text" class="input bookroll-name" list="bookmakerList" placeholder="Winamax" value="${escapeHTML(b.name)}">
-          <input type="number" class="input mono bookroll-amount" min="0" step="0.01" placeholder="200" value="${b.initial || ''}">
+          <input type="number" class="input mono bookroll-amount" min="0" step="any" placeholder="200" value="${b.initial || ''}">
+          <select class="select bookroll-cur" aria-label="Devise du bookmaker">${opts}</select>
           <button type="button" class="btn-icon bookroll-del" aria-label="Retirer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-        </div>`).join('')
+          ${eq ? `<span class="bookroll-eq">${escapeHTML(eq)}</span>` : ''}
+        </div>`;
+      }).join('')
       : '<p class="field-hint">Aucun bookmaker défini — le capital global ci-dessous sert de point de départ.</p>';
 
     $$('#bookrollRows .bookroll-row').forEach((row) => {
@@ -2550,14 +2677,18 @@
       const save = debounce(async () => {
         state.settings.bookrolls[i] = {
           name: row.querySelector('.bookroll-name').value.trim(),
-          initial: parseFloat(row.querySelector('.bookroll-amount').value) || 0
+          initial: parseFloat(row.querySelector('.bookroll-amount').value) || 0,
+          currency: row.querySelector('.bookroll-cur').value || 'EUR'
         };
         await DB.setSetting('bookrolls', state.settings.bookrolls);
+        await Money.ensureRates(bookCurrencies());
         syncInitialField();
+        renderBookrollRows();
         renderAll();
       }, 400);
       row.querySelector('.bookroll-name').addEventListener('input', save);
       row.querySelector('.bookroll-amount').addEventListener('input', save);
+      row.querySelector('.bookroll-cur').addEventListener('change', save);
       row.querySelector('.bookroll-del').addEventListener('click', async () => {
         state.settings.bookrolls.splice(i, 1);
         await DB.setSetting('bookrolls', state.settings.bookrolls);

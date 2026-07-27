@@ -243,7 +243,10 @@ const Stats = (() => {
   const round1 = (n) => Math.round(n * 10) / 10;
 
   /* ---- Formatage ---- */
-  const fmtMoney = (n) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: Math.abs(n) >= 1000 ? 0 : 2 }).format(n);
+  // Formatage délégué au module Devises (euro ou crypto selon le réglage).
+  const fmtMoney = (n) => (typeof Money !== 'undefined'
+    ? Money.fmt(n)
+    : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: Math.abs(n) >= 1000 ? 0 : 2 }).format(n));
   const fmtPct = (n) => `${n >= 0 ? '+' : ''}${n.toFixed(1)} %`;
   const fmtSigned = (n) => `${n > 0 ? '+' : ''}${fmtMoney(n)}`;
 

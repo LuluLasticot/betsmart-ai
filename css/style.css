@@ -473,11 +473,14 @@ body {
 
 .bookroll-row {
   display: grid;
-  grid-template-columns: 1fr 120px 32px;
+  grid-template-columns: 1fr 110px 78px 32px;
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
 }
+.bookroll-row .bookroll-cur { padding-left: 8px; padding-right: 22px; }
+.bookroll-eq { grid-column: 1 / -1; margin-top: -4px; font-size: 11.5px; color: var(--text-3); text-align: right; }
+.bankroll-eur { display: block; font-size: 11px; font-weight: 500; color: var(--text-3); margin-top: 1px; }
 
 /* ==========================================================================
    Modal
@@ -1409,7 +1412,7 @@ kbd {
 
   .bookroll-grid,
   .col-headers.bookroll-grid { grid-template-columns: minmax(0, 1fr) 90px 96px; }
-  .bookroll-row { grid-template-columns: 1fr 96px 32px; }
+  .bookroll-row { grid-template-columns: 1fr 84px 68px 32px; }
 
   .pick-numbers { gap: 14px; width: 100%; justify-content: space-between; }
   .pick-selection { flex-direction: column; align-items: stretch; }

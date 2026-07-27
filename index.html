@@ -374,13 +374,22 @@
         <div class="panel settings-panel">
           <div class="panel-head"><h2>Bankroll & bookmakers</h2></div>
           <div class="field">
+            <label for="setCurrency">Devise principale</label>
+            <select id="setCurrency" class="select full"></select>
+            <p class="field-hint">Toute l'application (bankroll, mises, profits, mises conseillées) s'affiche dans cette devise. Choisissez une crypto si vous jouez sur un book crypto (Stake…).</p>
+          </div>
+          <label class="deep-toggle" id="eurEquivField" hidden>
+            <input type="checkbox" id="setEurEquiv" checked>
+            <span>Afficher l'équivalent en euros à côté des montants crypto</span>
+          </label>
+          <div class="field">
             <label>Capital de départ par bookmaker</label>
             <div id="bookrollRows"></div>
             <button type="button" class="btn-secondary" id="addBookroll" style="margin-top:8px">+ Ajouter un bookmaker</button>
-            <p class="field-hint">Indiquez ce que vous avez déposé chez chaque book : le dashboard affichera la bankroll réelle de chacun, et le bookmaker renseigné sur vos paris alimentera ce détail.</p>
+            <p class="field-hint">Indiquez ce que vous avez déposé chez chaque book, et sa devise. Un book en crypto (Stake) se saisit dans sa devise : les montants sont convertis vers votre devise principale.</p>
           </div>
           <div class="field">
-            <label for="setInitial">Capital initial global (€)</label>
+            <label for="setInitial">Capital initial global (<span class="cur-label">€</span>)</label>
             <input type="number" id="setInitial" class="input" min="0" step="0.01" placeholder="500">
             <p class="field-hint" id="setInitialHint">Point de départ du calcul du ROC et du graphique d'évolution.</p>
           </div>
@@ -623,8 +632,9 @@
             <input type="number" id="fOdds" class="input mono" min="1.01" step="0.01" placeholder="1.85" required>
           </div>
           <div class="field">
-            <label for="fStake">Mise (€)</label>
-            <input type="number" id="fStake" class="input mono" min="0.1" step="0.01" placeholder="50" required>
+            <label for="fStake">Mise (<span class="cur-label">€</span>)</label>
+            <input type="number" id="fStake" class="input mono" min="0" step="any" placeholder="50" required>
+            <p class="field-hint" id="stakeFxHint" hidden></p>
           </div>
           <div class="field">
             <label for="fTipster">Tipster <span class="opt">optionnel</span></label>
@@ -642,7 +652,7 @@
             </select>
           </div>
           <div class="field" id="payoutField" hidden>
-            <label for="fPayout">Montant récupéré (€)</label>
+            <label for="fPayout">Montant récupéré (<span class="cur-label">€</span>)</label>
             <input type="number" id="fPayout" class="input mono" min="0" step="0.01">
           </div>
         </div>
@@ -678,7 +688,7 @@
           <input type="text" id="txBookmaker" class="input" list="bookmakerList" placeholder="Winamax" required>
         </div>
         <div class="field">
-          <label for="txAmount">Montant (€)</label>
+          <label for="txAmount">Montant (<span class="cur-label">€</span>)</label>
           <input type="number" id="txAmount" class="input mono" min="0.01" step="0.01" placeholder="100" required>
         </div>
         <div class="field">
@@ -705,8 +715,13 @@
       </div>
       <form id="onboardForm">
         <div class="field">
-          <label for="obBankroll">Votre bankroll de départ (€)</label>
-          <input type="number" id="obBankroll" class="input mono" min="0" step="0.01" placeholder="500" required>
+          <label for="obCurrency">Devise</label>
+          <select id="obCurrency" class="select full"></select>
+          <p class="field-hint">Euro, ou la crypto de votre bookmaker (Stake…). Tout le site s'affichera dans cette devise.</p>
+        </div>
+        <div class="field">
+          <label for="obBankroll">Votre bankroll de départ (<span class="cur-label">€</span>)</label>
+          <input type="number" id="obBankroll" class="input mono" min="0" step="any" placeholder="500" required>
           <p class="field-hint">Le total que vous avez actuellement chez vos bookmakers. Vous pourrez ensuite le détailler book par book dans les Réglages.</p>
         </div>
         <div class="field">
@@ -765,6 +780,7 @@
   <script src="js/db.js"></script>
   <script src="js/firebase-config.js"></script>
   <script src="js/cloud.js"></script>
+  <script src="js/money.js"></script>
   <script src="js/stats.js"></script>
   <script src="js/analytics.js"></script>
   <script src="js/gemini.js"></script>

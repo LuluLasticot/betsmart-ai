@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v72';
+  const APP_VERSION = 'v73';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -3199,7 +3199,6 @@
     });
   }
 
-  let lastGeminiLive = 0;   // dernier repli Gemini pour les scores live (coûteux)
   async function refreshLive(manual) {
     const matches = todaysPendingBets();
     const show = matches.length > 0;
@@ -3209,54 +3208,14 @@
 
     if (manual) $('#liveRefresh').classList.add('spinning');
     try {
-      // 1) Scores réels via coteur (rapide, gratuit) pour les matchs qu'on retrouve
-      const coteurScores = [];
-      const unmatched = [];
-      await Promise.all(matches.map(async (m) => {
-        try {
-          const cm = await Coteur.findMatch(m);
-          if (cm && cm.slug) {
-            const s = await Coteur.liveScore(cm.slug);
-            if (s && (s.score_dom !== null || s.status)) {
-              coteurScores.push({ id: m.id, score_dom: s.score_dom, score_ext: s.score_ext, status: s.status, live: s.live, finished: s.finished, source: 'coteur' });
-              return;
-            }
-          }
-        } catch (_) {}
-        unmatched.push(m);
-      }));
+      // Scores 100 % sans IA : coteur (gratuit) puis api-sports (1 appel « live »
+      // par sport, quel que soit le nombre de matchs). Aucun jeton consommé.
+      const statuses = await Scores.forBets(matches, { apiFootballKey: state.settings.apiFootballKey });
 
-      // 2) Repli Gemini — coûteux (recherche Google groundée) : réservé aux matchs
-      //    réellement en cours, et jamais en boucle de fond.
-      let geminiScores = [];
-      const liveWindow = unmatched.filter((m) => {
-        const ko = betKickoff(m);
-        if (!ko) return false;                       // heure inconnue → pas d'appel IA
-        const dt = Date.now() - ko;
-        return dt > -5 * 60e3 && dt < 4 * 3600e3;    // de 5 min avant à 4 h après le coup d'envoi
-      });
-      if (liveWindow.length && state.settings.apiKey && (manual || Date.now() - lastGeminiLive > 5 * 60e3)) {
-        lastGeminiLive = Date.now();
-        try {
-          geminiScores = await Live.fetchScores(state.settings.apiKey, state.settings.model, liveWindow, { force: !!manual });
-        } catch (_) {}
-      }
-
-      // Mémorise le statut live réel par pari → alimente les badges de la liste + le bandeau dashboard
       liveStatusById.clear();
-      for (const c of coteurScores) {
-        if (c.finished) liveStatusById.set(String(c.id), { phase: 'finished', score: `${c.score_dom ?? 0}–${c.score_ext ?? 0}` });
-        else if (c.live || c.score_dom !== null) {
-          const st = (c.status || '').replace(/EN DIRECT\s*[•·]?\s*/i, '').trim();
-          liveStatusById.set(String(c.id), { phase: 'live', score: `${c.score_dom ?? 0}–${c.score_ext ?? 0}`, min: st || null });
-        }
-      }
-      for (const s of geminiScores) {
-        if (s.etat === 'termine') liveStatusById.set(String(s.id), { phase: 'finished', score: `${s.score_dom ?? 0}–${s.score_ext ?? 0}` });
-        else if (s.etat === 'en_cours' || s.etat === 'mi_temps') liveStatusById.set(String(s.id), { phase: 'live', score: `${s.score_dom ?? 0}–${s.score_ext ?? 0}`, min: s.etat === 'mi_temps' ? 'MT' : (s.minute || null) });
-      }
+      for (const [id, s] of statuses) liveStatusById.set(id, s);
 
-      renderLive(coteurScores, geminiScores, matches);
+      renderLive(statuses, matches);
       renderLiveStrip();
       if ($('#view-bets').classList.contains('active')) renderBets();
     } catch (err) {
@@ -3268,39 +3227,19 @@
     }
   }
 
-  function renderLive(coteurScores, geminiScores, matches) {
-    const cById = new Map(coteurScores.map((s) => [String(s.id), s]));
-    const gById = new Map(geminiScores.map((s) => [String(s.id), s]));
+  function renderLive(statuses, matches) {
     const liveNow = new Map(); // id → nom lisible, pour l'alerte coup d'envoi
 
     const rows = matches.map((m) => {
       const teams = escapeHTML((m.event || '').replace(/\s*[–—-]\s*/g, ' – '));
       const plain = (m.event || '').replace(/\s*[–—-]\s*/g, ' – ');
-      const c = cById.get(String(m.id));
+      const s = statuses.get(String(m.id));
+      if (!s) return liveRow(teams, null, 'à venir', 'done');
 
-      if (c) {
-        // Source coteur : score_dom/ext + status texte ("EN DIRECT • Mi-temps", "Terminé"…)
-        if (c.score_dom === null && !c.live && !c.finished) {
-          return liveRow(teams, null, 'à venir', 'done');
-        }
-        const score = `${c.score_dom ?? 0}–${c.score_ext ?? 0}`;
-        const st = (c.status || '').replace(/EN DIRECT\s*[•·]?\s*/i, '').trim();
-        const min = c.finished ? 'Fin' : (st || 'live');
-        const cls = c.finished ? 'done' : /mi-?temps/i.test(st) ? 'ht' : '';
-        if (!c.finished) liveNow.set(String(m.id), plain);
-        return liveRow(teams, score, min, cls);
-      }
-
-      // Source Gemini (repli)
-      const s = gById.get(String(m.id));
-      if (!s || s.etat === 'inconnu' || s.etat === 'a_venir') {
-        return liveRow(teams, null, s?.minute || 'à venir', 'done');
-      }
-      const score = `${s.score_dom ?? 0}–${s.score_ext ?? 0}`;
-      const cls = s.etat === 'mi_temps' ? 'ht' : s.etat === 'termine' ? 'done' : '';
-      const min = s.etat === 'termine' ? 'Fin' : s.etat === 'mi_temps' ? 'MT' : (s.minute || '');
-      if (s.etat === 'en_cours' || s.etat === 'mi_temps') liveNow.set(String(m.id), plain);
-      return liveRow(teams, score, min, cls);
+      const cls = s.phase === 'finished' ? 'done' : /mi-?temps|^MT$/i.test(s.min || '') ? 'ht' : '';
+      const min = s.phase === 'finished' ? 'Fin' : (s.min || 'live');
+      if (s.phase !== 'finished') liveNow.set(String(m.id), plain);
+      return liveRow(teams, s.score, min, cls);
     });
 
     // Alerte « coup d'envoi » : match qui passe en live entre deux rafraîchissements

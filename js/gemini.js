@@ -8,6 +8,68 @@
 const Gemini = (() => {
   const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+  /* ------------------------------------------------------------------
+     Découverte automatique des modèles disponibles
+     Google retire régulièrement d'anciens modèles (« no longer available to
+     new users ») et en publie de nouveaux. Plutôt que de figer un nom dans le
+     code, on interroge l'API pour choisir le meilleur modèle rapide (flash) et
+     le meilleur modèle approfondi (pro) réellement accessibles avec LA clé de
+     l'utilisateur. Résultat mis en cache 24 h.
+     ------------------------------------------------------------------ */
+  const MODELS_KEY = 'betsmart.models';
+  const EXCLUDE = /embedding|aqa|imagen|image|tts|audio|live|gemma|veo|learnlm|robotics/i;
+
+  const readCache = () => { try { return JSON.parse(localStorage.getItem(MODELS_KEY) || 'null'); } catch (_) { return null; } };
+  const writeCache = (v) => { try { localStorage.setItem(MODELS_KEY, JSON.stringify(v)); } catch (_) {} };
+  const clearModelCache = () => { try { localStorage.removeItem(MODELS_KEY); } catch (_) {} };
+
+  /** Score un modèle : version décroissante, stable préféré au preview/exp. */
+  function score(id) {
+    const v = parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || '0');
+    const preview = /preview|exp|-\d{4}$|latest/i.test(id) ? 1 : 0;
+    const lite = /lite/i.test(id) ? 1 : 0;
+    return { v, preview, lite };
+  }
+  const better = (a, b) => {
+    if (!a) return true;
+    const sa = score(a), sb = score(b);
+    if (sb.lite !== sa.lite) return sb.lite < sa.lite;       // éviter les « lite »
+    if (sb.preview !== sa.preview) return sb.preview < sa.preview; // stable d'abord
+    if (sb.v !== sa.v) return sb.v > sa.v;                    // version la plus récente
+    return b.length < a.length;                               // alias court (sans date)
+  };
+
+  /** { flash, pro } — modèles réellement utilisables avec cette clé. */
+  async function resolveModels(apiKey, { force = false } = {}) {
+    if (!apiKey) return null;
+    const cached = readCache();
+    if (!force && cached && Date.now() - cached.at < 86400e3 && cached.flash) return cached;
+
+    const res = await fetch(`${BASE}?key=${encodeURIComponent(apiKey)}&pageSize=200`);
+    if (!res.ok) throw new Error(`Impossible de lister les modèles (${res.status})`);
+    const data = await res.json();
+    const ids = (data.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map((m) => String(m.name || '').replace(/^models\//, ''))
+      .filter((id) => id.startsWith('gemini') && !EXCLUDE.test(id));
+
+    let flash = null, pro = null;
+    for (const id of ids) {
+      if (/flash/i.test(id) && better(flash, id)) flash = id;
+      if (/pro/i.test(id) && better(pro, id)) pro = id;
+    }
+    // Aucun « flash » ? on prend le meilleur modèle générique disponible.
+    if (!flash) for (const id of ids) if (better(flash, id)) flash = id;
+    if (!flash) throw new Error('Aucun modèle Gemini disponible avec cette clé.');
+
+    const out = { at: Date.now(), flash, pro: pro || flash, all: ids };
+    writeCache(out);
+    return out;
+  }
+
+  /** Le message d'un modèle retiré/introuvable → on redécouvre et on réessaie. */
+  const isModelGone = (msg) => /no longer available|not found|not supported|is not available/i.test(String(msg || ''));
+
   async function call(apiKey, model, parts, jsonSchema) {
     const body = {
       contents: [{ role: 'user', parts }],
@@ -27,6 +89,15 @@ const Gemini = (() => {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       const msg = err?.error?.message || `Erreur API (${res.status})`;
+      // Modèle retiré par Google → on redécouvre les modèles et on rejoue une fois
+      if (isModelGone(msg) && !call._retrying) {
+        try {
+          call._retrying = true;
+          const m = await resolveModels(apiKey, { force: true });
+          const next = /pro/i.test(model) ? m.pro : m.flash;
+          if (next && next !== model) return await call(apiKey, next, parts, jsonSchema);
+        } finally { call._retrying = false; }
+      }
       throw new Error(msg);
     }
 
@@ -184,5 +255,5 @@ Sois direct et exigeant mais bienveillant. Pas de généralités : chaque point 
     });
   }
 
-  return { scanTicket, scanMatch, coach, review, test, fileToBase64 };
+  return { scanTicket, scanMatch, coach, review, test, fileToBase64, resolveModels, clearModelCache, isModelGone };
 })();

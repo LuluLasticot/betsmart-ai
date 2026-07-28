@@ -22,10 +22,11 @@
     view: 'dashboard',
     charts: {},
     scanQueue: [],
-    betsPage: 1
+    betsPage: 1,
+    geminiModels: null
   };
 
-  const APP_VERSION = 'v68';
+  const APP_VERSION = 'v69';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -55,9 +56,41 @@
   /* ========================================================================
      Initialisation
      ======================================================================== */
+  /** Aligne les modèles Gemini utilisés sur ceux réellement disponibles avec la clé
+      (Google retire régulièrement les anciens : aucun nom n'est figé dans le code). */
+  async function syncGeminiModels({ force = false } = {}) {
+    if (!state.settings.apiKey) return null;
+    try {
+      const m = await Gemini.resolveModels(state.settings.apiKey, { force });
+      state.geminiModels = m;
+      // Le modèle enregistré n'existe plus (ou est vide) → on prend le meilleur dispo
+      if (m.flash && !(m.all || []).includes(state.settings.model)) {
+        state.settings.model = m.flash;
+        await DB.setSetting('model', m.flash);
+      }
+      renderModelOptions();
+      return m;
+    } catch (_) { return null; }
+  }
+
+  /** Remplit la liste des modèles avec ceux réellement disponibles. */
+  function renderModelOptions() {
+    const sel = document.getElementById('setModel');
+    if (!sel) return;
+    const m = state.geminiModels;
+    const ids = (m && m.all && m.all.length) ? m.all : [state.settings.model].filter(Boolean);
+    sel.innerHTML = ids.map((id) => {
+      const tag = m && id === m.flash ? ' — rapide (recommandé)' : (m && id === m.pro ? ' — approfondi' : '');
+      return `<option value="${escapeHTML(id)}"${id === state.settings.model ? ' selected' : ''}>${escapeHTML(id)}${tag}</option>`;
+    }).join('');
+    const hint = document.getElementById('modelHint');
+    if (hint && m) hint.textContent = `Détecté automatiquement : ${ids.length} modèle(s) disponible(s) avec votre clé. Rapide : ${m.flash}${m.pro && m.pro !== m.flash ? ` · Approfondi : ${m.pro}` : ''}.`;
+  }
+
   async function init() {
     const saved = await DB.getAllSettings();
     Object.assign(state.settings, saved);
+    syncGeminiModels().catch(() => {});
     Money.setCurrency(state.settings.currency, state.settings.showEurEquiv);
     Money.ensureRates(bookCurrencies()).then(() => { applyCurrencyUI(); renderAll(); }).catch(() => {});
     [state.bets, state.txs, state.picks] = await Promise.all([DB.getBets(), DB.getTransactions(), DB.getPicks()]);
@@ -1415,7 +1448,9 @@
     $('#loadComparator').addEventListener('click', loadComparator);
     $('#loadFixtures').addEventListener('click', loadFixtureCalendar);
     // Quota Gemini Pro épuisé (free tier) → bascule automatique sur Flash
-    Advisor.setFallbackHandler(() => toast('Quota Gemini Pro atteint — analyse poursuivie avec Flash'));
+    Advisor.setFallbackHandler((from, to, reason) => toast(reason === 'gone'
+      ? `Modèle ${from} retiré par Google — bascule sur ${to}`
+      : `Quota ${from} atteint — analyse poursuivie avec ${to}`));
     // Clic sur « Analyser par le Radar » d'une ligne du comparateur → analyse approfondie du match
     $('#comparatorContent').addEventListener('click', (ev) => {
       const b = ev.target.closest('.cmp-analyze');
@@ -1528,7 +1563,7 @@
         ? `${pending.length} paris en attente pour ${Stats.fmtMoney(pending.reduce((s, b) => s + Number(b.stake || 0), 0))} au total`
         : 'aucun pari en cours',
       feedback: Advisor.feedbackBlock(state.picks),
-      deepModel: $('#advDeep').checked ? 'gemini-2.5-pro' : null
+      deepModel: $('#advDeep').checked ? (state.geminiModels?.pro || null) : null
     };
   }
 
@@ -2459,7 +2494,9 @@
     $('#setApiKey').addEventListener('change', async () => {
       state.settings.apiKey = $('#setApiKey').value.trim();
       await DB.setSetting('apiKey', state.settings.apiKey);
-      toast('Clé API enregistrée');
+      Gemini.clearModelCache();
+      const m = await syncGeminiModels({ force: true });
+      toast(m ? `Clé enregistrée — modèle ${m.flash}` : 'Clé API enregistrée');
     });
 
     $('#setApiFootballKey').addEventListener('change', async () => {
@@ -2599,7 +2636,7 @@
       if (!confirm('Effacer définitivement tous les paris et réglages ?')) return;
       await DB.wipe();
       state.bets = [];
-      state.settings = { initialBankroll: 500, apiKey: '', model: 'gemini-2.5-flash', bookrolls: [] };
+      state.settings = DEFAULT_SETTINGS();
       bindSettingsValues();
       renderBookrollRows();
       renderAll();
@@ -2619,6 +2656,7 @@
     applyCurrencyUI();
     $('#setStaking').value = state.settings.stakingMode || 'kelly';
     $('#setMaxExposure').value = state.settings.maxExposurePct || 25;
+    renderModelOptions();
     $('#setModel').value = state.settings.model;
     syncInitialField();
     syncOddsSourceUI();

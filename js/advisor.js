@@ -48,13 +48,30 @@ const Advisor = (() => {
         await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
         continue;
       }
-      // Quota Pro épuisé → on refait la même demande avec Flash (quota bien plus large)
-      if (res.status === 429 && allowFallback && /pro/i.test(model)) {
-        onFallback?.(model, FALLBACK_MODEL);
-        return callGemini(apiKey, FALLBACK_MODEL, prompt, { temperature, retries: 1, allowFallback: false });
-      }
       const err = await res.json().catch(() => ({}));
       const msg = err?.error?.message || `Erreur API (${res.status})`;
+
+      // Modèle retiré par Google → redécouverte automatique et nouvelle tentative
+      if (allowFallback && typeof Gemini !== 'undefined' && Gemini.isModelGone(msg)) {
+        try {
+          const m = await Gemini.resolveModels(apiKey, { force: true });
+          const next = /pro/i.test(model) ? m.pro : m.flash;
+          if (next && next !== model) {
+            onFallback?.(model, next, 'gone');
+            return callGemini(apiKey, next, prompt, { temperature, retries: 1, allowFallback: false });
+          }
+        } catch (_) { /* on remonte l'erreur d'origine */ }
+      }
+
+      // Quota Pro épuisé → on refait la même demande avec le modèle rapide
+      if (res.status === 429 && allowFallback && /pro/i.test(model)) {
+        let fast = FALLBACK_MODEL;
+        try { if (typeof Gemini !== 'undefined') fast = (await Gemini.resolveModels(apiKey)).flash || fast; } catch (_) {}
+        if (fast !== model) {
+          onFallback?.(model, fast, 'quota');
+          return callGemini(apiKey, fast, prompt, { temperature, retries: 1, allowFallback: false });
+        }
+      }
       throw new Error(res.status === 429
         ? 'Quota Gemini atteint — le free tier limite fortement le nombre de requêtes. Patientez une minute, ou décochez « Analyse approfondie ».'
         : msg);

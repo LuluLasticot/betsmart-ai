@@ -446,11 +446,8 @@
           </div>
           <div class="field">
             <label for="setModel">Modèle</label>
-            <select id="setModel" class="select full">
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash (recommandé)</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro (plus précis, plus lent)</option>
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-            </select>
+            <select id="setModel" class="select full"></select>
+            <p class="field-hint" id="modelHint">Détecté automatiquement selon votre clé : Google retire régulièrement les anciens modèles, l'app choisit seule le plus récent disponible.</p>
           </div>
           <button class="btn-ghost" id="testApi">Tester la connexion</button>
           <span id="apiTestResult" class="api-test"></span>

@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v71';
+  const APP_VERSION = 'v72';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -3175,7 +3175,7 @@
   function bindLive() {
     $('#liveRefresh').addEventListener('click', () => refreshLive(true));
     // Rafraîchissement auto toutes les 90 s quand l'onglet est visible
-    liveTimer = setInterval(() => { if (!document.hidden) refreshLive(false); }, 90000);
+    liveTimer = setInterval(() => { if (!document.hidden) refreshLive(false); }, 180000);
     // Rafraîchissement léger des comptes à rebours / transitions (imminent → en cours) toutes les 30 s
     setInterval(() => {
       if (document.hidden) return;
@@ -3199,6 +3199,7 @@
     });
   }
 
+  let lastGeminiLive = 0;   // dernier repli Gemini pour les scores live (coûteux)
   async function refreshLive(manual) {
     const matches = todaysPendingBets();
     const show = matches.length > 0;
@@ -3225,10 +3226,20 @@
         unmatched.push(m);
       }));
 
-      // 2) Repli Gemini pour les matchs non trouvés sur coteur
+      // 2) Repli Gemini — coûteux (recherche Google groundée) : réservé aux matchs
+      //    réellement en cours, et jamais en boucle de fond.
       let geminiScores = [];
-      if (unmatched.length && state.settings.apiKey) {
-        try { geminiScores = await Live.fetchScores(state.settings.apiKey, state.settings.model, unmatched); } catch (_) {}
+      const liveWindow = unmatched.filter((m) => {
+        const ko = betKickoff(m);
+        if (!ko) return false;                       // heure inconnue → pas d'appel IA
+        const dt = Date.now() - ko;
+        return dt > -5 * 60e3 && dt < 4 * 3600e3;    // de 5 min avant à 4 h après le coup d'envoi
+      });
+      if (liveWindow.length && state.settings.apiKey && (manual || Date.now() - lastGeminiLive > 5 * 60e3)) {
+        lastGeminiLive = Date.now();
+        try {
+          geminiScores = await Live.fetchScores(state.settings.apiKey, state.settings.model, liveWindow, { force: !!manual });
+        } catch (_) {}
       }
 
       // Mémorise le statut live réel par pari → alimente les badges de la liste + le bandeau dashboard

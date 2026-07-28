@@ -29,10 +29,22 @@ Termine par un unique bloc \`\`\`json :
 \`\`\``;
   }
 
-  async function fetchScores(apiKey, model, matches) {
+  // Un appel Gemini « groundé » est coûteux (résultats de recherche réinjectés en
+  // contexte : ~30 000 jetons). On ne le déclenche donc que rarement.
+  const TTL = 5 * 60 * 1000;
+
+  async function fetchScores(apiKey, model, matches, { force = false } = {}) {
     if (!matches.length) return [];
     const key = matches.map((m) => m.id).sort().join(',');
-    if (cache.key === key && Date.now() - cache.at < 45000) return cache.data;
+    if (cache.key === key && Date.now() - cache.at < (force ? 30000 : TTL)) return cache.data;
+
+    // Comptabilise et respecte le quota partagé avec le reste de l'app
+    if (typeof Gemini !== 'undefined' && Gemini.quota) {
+      const u = Gemini.quota.usage();
+      if (u.day >= u.rpd) return cache.data || [];
+      await Gemini.quota.waitForSlot();
+      Gemini.quota.recordCall();
+    }
 
     const now = new Date().toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
     const body = {

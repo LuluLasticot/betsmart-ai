@@ -59,6 +59,12 @@ Termine ta réponse par un unique bloc \`\`\`json :
       generationConfig: { temperature: 0 }
     };
 
+    // Comptabilise l'appel dans le quota partagé (et attend un créneau si besoin)
+    if (typeof Gemini !== 'undefined' && Gemini.quota) {
+      await Gemini.quota.waitForSlot();
+      Gemini.quota.recordCall();
+    }
+
     const res = await fetch(`${BASE}/${model}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },

@@ -21,15 +21,22 @@ const Advisor = (() => {
   // en cas de 429 on bascule automatiquement sur Flash plutôt que d'échouer.
   const FALLBACK_MODEL = 'gemini-2.5-flash';
   let onFallback = null; // hook UI (app.js) pour prévenir l'utilisateur
+  let onWait = null;     // hook UI : attente volontaire pour respecter le quota
 
-  async function callGemini(apiKey, model, prompt, { temperature = 0.25, retries = 2, allowFallback = true } = {}) {
+  async function callGemini(apiKey, model, prompt, { temperature = 0.25, retries = 1, allowFallback = true } = {}) {
     const body = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       tools: [{ google_search: {} }],
       generationConfig: { temperature }
     };
+    const Q = (typeof Gemini !== 'undefined' && Gemini.quota) ? Gemini.quota : null;
 
     for (let attempt = 0; ; attempt++) {
+      // On attend un créneau libre AVANT d'appeler : un 429 évité est un quota économisé.
+      if (Q) {
+        await Q.waitForSlot({ onWait: (s) => onWait?.(s) });
+        Q.recordCall();
+      }
       const res = await fetch(`${BASE}/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
@@ -43,13 +50,22 @@ const Advisor = (() => {
         return text;
       }
 
-      // 429 (quota) et 503 (surcharge) : on attend puis on réessaie
-      if ((res.status === 429 || res.status === 503) && attempt < retries) {
-        await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
-        continue;
-      }
       const err = await res.json().catch(() => ({}));
       const msg = err?.error?.message || `Erreur API (${res.status})`;
+
+      // Quota JOURNALIER épuisé : réessayer ne ferait qu'échouer → on s'arrête net.
+      if (res.status === 429 && Q && Q.isDailyQuota(err)) {
+        const u = Q.usage();
+        throw new Error(`Quota Gemini journalier épuisé (~${u.rpd} requêtes/jour en free tier, ${u.day} utilisées aujourd'hui). Il se réinitialise chaque jour ; sinon activez la facturation sur votre projet Google pour lever la limite.`);
+      }
+
+      // 429/503 transitoires : on respecte le délai conseillé par l'API (RetryInfo)
+      if ((res.status === 429 || res.status === 503) && attempt < retries) {
+        const wait = (Q && Q.retryDelayOf(err)) || 20000;
+        onWait?.(Math.ceil(wait / 1000));
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
 
       // Modèle retiré par Google → redécouverte automatique et nouvelle tentative
       if (allowFallback && typeof Gemini !== 'undefined' && Gemini.isModelGone(msg)) {
@@ -72,9 +88,11 @@ const Advisor = (() => {
           return callGemini(apiKey, fast, prompt, { temperature, retries: 1, allowFallback: false });
         }
       }
-      throw new Error(res.status === 429
-        ? 'Quota Gemini atteint — le free tier limite fortement le nombre de requêtes. Patientez une minute, ou décochez « Analyse approfondie ».'
-        : msg);
+      if (res.status === 429) {
+        const u = Q ? Q.usage() : null;
+        throw new Error(`Quota Gemini atteint (free tier : ~${u ? u.rpm : 5} requêtes/minute et ~${u ? u.rpd : 20}/jour)${u ? ` — ${u.day} utilisées aujourd'hui` : ''}. Patientez une minute et relancez.`);
+      }
+      throw new Error(msg);
     }
   }
 
@@ -524,6 +542,7 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
   }
 
   const setFallbackHandler = (fn) => { onFallback = fn; };
+  const setWaitHandler = (fn) => { onWait = fn; };
 
-  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats, feedbackBlock, setFallbackHandler, PROFILES };
+  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats, feedbackBlock, setFallbackHandler, setWaitHandler, PROFILES };
 })();

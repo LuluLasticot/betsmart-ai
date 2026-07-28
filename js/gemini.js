@@ -70,6 +70,57 @@ const Gemini = (() => {
   /** Le message d'un modèle retiré/introuvable → on redécouvre et on réessaie. */
   const isModelGone = (msg) => /no longer available|not found|not supported|is not available/i.test(String(msg || ''));
 
+  /* ------------------------------------------------------------------
+     Gestion du quota (free tier : ~5 requêtes/min et ~20/jour)
+     Le quota est la ressource rare : on l'économise activement plutôt que
+     d'enchaîner des tentatives qui échouent et le consomment pour rien.
+     ------------------------------------------------------------------ */
+  const CALLS_KEY = 'betsmart.geminiCalls';
+  const RPM = 5;                       // requêtes/minute (free tier)
+  const RPD = 20;                      // requêtes/jour (free tier, modèle courant)
+
+  const readCalls = () => { try { return JSON.parse(localStorage.getItem(CALLS_KEY) || '[]'); } catch (_) { return []; } };
+  const writeCalls = (a) => { try { localStorage.setItem(CALLS_KEY, JSON.stringify(a.slice(-200))); } catch (_) {} };
+  const startOfDay = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+  /** { minute, day, rpm, rpd } — consommation connue côté client. */
+  function usage() {
+    const now = Date.now();
+    const calls = readCalls().filter((t) => now - t < 86400e3);
+    return {
+      minute: calls.filter((t) => now - t < 60e3).length,
+      day: calls.filter((t) => t >= startOfDay()).length,
+      rpm: RPM, rpd: RPD
+    };
+  }
+  const recordCall = () => { const a = readCalls(); a.push(Date.now()); writeCalls(a); };
+
+  /** Attend qu'un créneau se libère plutôt que de déclencher un 429 inutile. */
+  async function waitForSlot({ onWait } = {}) {
+    for (let i = 0; i < 3; i++) {
+      const now = Date.now();
+      const recent = readCalls().filter((t) => now - t < 60e3).sort((a, b) => a - b);
+      if (recent.length < RPM) return;
+      const wait = Math.max(1000, 60e3 - (now - recent[0]) + 500);
+      onWait?.(Math.ceil(wait / 1000));
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+
+  /** Délai conseillé par l'API (RetryInfo), en ms. */
+  function retryDelayOf(err) {
+    const d = (err?.error?.details || []).find((x) => String(x['@type'] || '').includes('RetryInfo'));
+    const s = d && typeof d.retryDelay === 'string' ? parseFloat(d.retryDelay) : NaN;
+    return isFinite(s) ? Math.min(Math.ceil(s * 1000) + 500, 70000) : null;
+  }
+  /** Quota JOURNALIER épuisé : inutile de réessayer, il faut attendre la remise à zéro. */
+  function isDailyQuota(err) {
+    const txt = JSON.stringify(err || {});
+    return /PerDay|per day|daily/i.test(txt);
+  }
+
+  const quota = { usage, recordCall, waitForSlot, retryDelayOf, isDailyQuota, RPM, RPD };
+
   async function call(apiKey, model, parts, jsonSchema) {
     const body = {
       contents: [{ role: 'user', parts }],
@@ -79,6 +130,10 @@ const Gemini = (() => {
       }
     };
     if (jsonSchema) body.generationConfig.responseSchema = jsonSchema;
+
+    // Respect du quota (5 req/min en free tier) : on attend un créneau libre.
+    await quota.waitForSlot();
+    quota.recordCall();
 
     const res = await fetch(`${BASE}/${model}:generateContent`, {
       method: 'POST',
@@ -255,5 +310,5 @@ Sois direct et exigeant mais bienveillant. Pas de généralités : chaque point 
     });
   }
 
-  return { scanTicket, scanMatch, coach, review, test, fileToBase64, resolveModels, clearModelCache, isModelGone };
+  return { scanTicket, scanMatch, coach, review, test, fileToBase64, resolveModels, clearModelCache, isModelGone, quota };
 })();

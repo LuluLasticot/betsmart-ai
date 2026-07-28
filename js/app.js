@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v69';
+  const APP_VERSION = 'v70';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -71,6 +71,19 @@
       renderModelOptions();
       return m;
     } catch (_) { return null; }
+  }
+
+  /** Consommation Gemini du jour (le free tier est la vraie ressource rare). */
+  function renderQuotaInfo() {
+    const el = document.getElementById('quotaInfo');
+    if (!el || typeof Gemini === 'undefined' || !Gemini.quota) return;
+    const u = Gemini.quota.usage();
+    const left = Math.max(0, u.rpd - u.day);
+    const scans = Math.floor(left / 2); // un scan Radar = 2 requêtes
+    el.innerHTML = `Quota Gemini (free tier) : <strong>${u.day}/${u.rpd}</strong> requêtes aujourd'hui`
+      + ` · ${left > 0 ? `≈ ${scans} scan${scans > 1 ? 's' : ''} restant${scans > 1 ? 's' : ''}` : 'épuisé — remise à zéro quotidienne'}`
+      + ` · limite ${u.rpm}/min (l'app patiente automatiquement).`;
+    el.style.color = left <= 2 ? 'var(--red)' : '';
   }
 
   /** Remplit la liste des modèles avec ceux réellement disponibles. */
@@ -1451,6 +1464,10 @@
     Advisor.setFallbackHandler((from, to, reason) => toast(reason === 'gone'
       ? `Modèle ${from} retiré par Google — bascule sur ${to}`
       : `Quota ${from} atteint — analyse poursuivie avec ${to}`));
+    // Attente volontaire pour rester sous la limite (5 req/min) plutôt que d'échouer
+    Advisor.setWaitHandler((sec) => toast(`Quota Gemini : attente de ${sec} s avant la requête suivante…`));
+    renderQuotaInfo();
+    setInterval(renderQuotaInfo, 30000);
     // Clic sur « Analyser par le Radar » d'une ligne du comparateur → analyse approfondie du match
     $('#comparatorContent').addEventListener('click', (ev) => {
       const b = ev.target.closest('.cmp-analyze');
@@ -1741,6 +1758,14 @@
       return;
     }
 
+    // Le free tier est très limité : on prévient avant de consommer les dernières requêtes
+    const q = Gemini.quota.usage();
+    if (q.day >= q.rpd) {
+      container.innerHTML = `<div class="empty-state"><p>Quota Gemini journalier épuisé (${q.day}/${q.rpd} requêtes).</p><p class="empty-hint">Il se réinitialise chaque jour. Pour lever la limite, activez la facturation sur votre projet Google AI Studio.</p></div>`;
+      return;
+    }
+    if (q.rpd - q.day <= 2 && !confirm(`Il ne reste que ${q.rpd - q.day} requête(s) Gemini aujourd'hui, et un scan en consomme 2.\n\nLancer quand même ?`)) return;
+
     const btn = $('#runAdvisor');
     btn.disabled = true;
     const ctx = buildAdvisorCtx();
@@ -1791,6 +1816,7 @@
       container.innerHTML = `<div class="empty-state"><p>Radar indisponible : ${escapeHTML(err.message)}</p><p class="empty-hint">La recherche Google (grounding) nécessite une clé API dont le quota le permet. Réessayez dans une minute.</p></div>`;
     } finally {
       btn.disabled = false;
+      renderQuotaInfo();
     }
   }
 

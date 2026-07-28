@@ -56,7 +56,10 @@ Termine ta réponse par un unique bloc \`\`\`json :
     const body = {
       contents: [{ role: 'user', parts: [{ text: buildPrompt(pendingBets, now) }] }],
       tools: [{ google_search: {} }],
-      generationConfig: { temperature: 0 }
+      generationConfig: {
+        temperature: 0,
+        ...(typeof Gemini !== 'undefined' && Gemini.tuning ? Gemini.tuning(model, { maxOutputTokens: 2048 }) : {})
+      }
     };
 
     // Comptabilise l'appel dans le quota partagé (et attend un créneau si besoin)

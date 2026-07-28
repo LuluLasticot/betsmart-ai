@@ -23,11 +23,16 @@ const Advisor = (() => {
   let onFallback = null; // hook UI (app.js) pour prévenir l'utilisateur
   let onWait = null;     // hook UI : attente volontaire pour respecter le quota
 
-  async function callGemini(apiKey, model, prompt, { temperature = 0.25, retries = 1, allowFallback = true } = {}) {
+  async function callGemini(apiKey, model, prompt, { temperature = 0.25, retries = 1, allowFallback = true, noTuning = false } = {}) {
     const body = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       tools: [{ google_search: {} }],
-      generationConfig: { temperature }
+      generationConfig: {
+        temperature,
+        // Réflexion minimale + réponse plafonnée : les jetons de « thinking »
+        // sont facturés en sortie et représentaient l'essentiel du coût.
+        ...(!noTuning && typeof Gemini !== 'undefined' && Gemini.tuning ? Gemini.tuning(model, { maxOutputTokens: 6144 }) : {})
+      }
     };
     const Q = (typeof Gemini !== 'undefined' && Gemini.quota) ? Gemini.quota : null;
 
@@ -65,6 +70,11 @@ const Advisor = (() => {
         onWait?.(Math.ceil(wait / 1000));
         await new Promise((r) => setTimeout(r, wait));
         continue;
+      }
+
+      // Réglage de réflexion non supporté par ce modèle → on rejoue sans
+      if (res.status === 400 && !noTuning && /thinking|thought/i.test(msg)) {
+        return callGemini(apiKey, model, prompt, { temperature, retries: 0, allowFallback, noTuning: true });
       }
 
       // Modèle retiré par Google → redécouverte automatique et nouvelle tentative

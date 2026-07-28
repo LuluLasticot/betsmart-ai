@@ -121,12 +121,31 @@ const Gemini = (() => {
 
   const quota = { usage, recordCall, waitForSlot, retryDelayOf, isDailyQuota, RPM, RPD };
 
+  /* ------------------------------------------------------------------
+     Réglage « anti-gaspillage » de la génération
+     Les modèles récents raisonnent avant de répondre, et ces jetons de
+     réflexion sont FACTURÉS EN SORTIE (le poste de coût dominant : jusqu'à
+     50 000 jetons pour une analyse). On demande donc le niveau de réflexion
+     le plus bas et on plafonne la longueur de réponse.
+     ⚠ Gemini 3+ utilise « thinkingLevel », Gemini 2.5 « thinkingBudget » :
+     les mélanger renvoie une erreur 400.
+     ------------------------------------------------------------------ */
+  function tuning(model, { maxOutputTokens } = {}) {
+    const id = String(model || '');
+    const cfg = {};
+    if (maxOutputTokens) cfg.maxOutputTokens = maxOutputTokens;
+    if (/gemini-[3-9]/.test(id)) cfg.thinkingConfig = { thinkingLevel: 'low' };
+    else if (/gemini-2\.5/.test(id)) cfg.thinkingConfig = { thinkingBudget: /pro/i.test(id) ? 128 : 0 };
+    return cfg;
+  }
+
   async function call(apiKey, model, parts, jsonSchema) {
     const body = {
       contents: [{ role: 'user', parts }],
       generationConfig: {
         temperature: 0.1,
-        responseMimeType: 'application/json'
+        responseMimeType: 'application/json',
+        ...tuning(model, { maxOutputTokens: 2048 })
       }
     };
     if (jsonSchema) body.generationConfig.responseSchema = jsonSchema;
@@ -310,5 +329,5 @@ Sois direct et exigeant mais bienveillant. Pas de généralités : chaque point 
     });
   }
 
-  return { scanTicket, scanMatch, coach, review, test, fileToBase64, resolveModels, clearModelCache, isModelGone, quota };
+  return { scanTicket, scanMatch, coach, review, test, fileToBase64, resolveModels, clearModelCache, isModelGone, quota, tuning };
 })();

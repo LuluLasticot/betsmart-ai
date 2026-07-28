@@ -1429,3 +1429,8 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Détail des picks CLV (onglet Analyse › CLV) */
+.clv-grid, .col-headers.clv-grid { grid-template-columns: minmax(0,1fr) 72px 78px 84px 72px 92px; }
+.clv-followed { font-size: 10.5px; font-weight: 600; color: var(--accent); margin-left: 6px; }
+@media (max-width: 720px) { .clv-grid, .col-headers.clv-grid { grid-template-columns: minmax(0,1fr) 78px 88px; } }

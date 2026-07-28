@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v74';
+  const APP_VERSION = 'v75';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2958,6 +2958,34 @@
   }
 
   /* ---- Onglet CLV : la boussole (battre la cote de clôture) ---- */
+  /** Détail des picks dont la CLV a été mesurée : cote prise vs cote de clôture. */
+  function clvRows(picks) {
+    const RES = { won: ['Gagné', 'pos'], lost: ['Perdu', 'neg'], void: ['Annulé', ''] };
+    return picks
+      .slice()
+      .sort((a, b) => (b.kickoff || 0) - (a.kickoff || 0))
+      .map((p) => {
+        const when = p.kickoff
+          ? new Date(p.kickoff).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })
+          : (p.date_match || '').slice(5).split('-').reverse().join('/');
+        const [rLbl, rCls] = RES[p.result] || ['En cours', ''];
+        const clvCls = p.clv > 0 ? 'pos' : p.clv < 0 ? 'neg' : '';
+        const proba = typeof p.probabilite === 'number' ? Math.round(p.probabilite * 100) + ' %' : '—';
+        const meta = [p.sport, p.competition, when].filter(Boolean).join(' · ');
+        return `<div class="bet-row clv-grid">
+          <div class="bet-main">
+            <div class="bet-event">${escapeHTML(p.match || '—')}${p.followed ? ' <span class="clv-followed" title="Pari suivi">✓ suivi</span>' : ''}</div>
+            <div class="bet-meta">${escapeHTML(p.selection || '')}${meta ? ' — ' + escapeHTML(meta) : ''}</div>
+          </div>
+          <div class="bet-num r hide-m">${Number(p.cote).toFixed(2)}</div>
+          <div class="bet-num r hide-m">${p.closingOdds ? Number(p.closingOdds).toFixed(2) : '—'}</div>
+          <div class="bet-num r ${clvCls}"><strong>${p.clv >= 0 ? '+' : ''}${p.clv} %</strong></div>
+          <div class="bet-num r hide-m">${proba}</div>
+          <div class="bet-num r ${rCls}">${rLbl}</div>
+        </div>`;
+      }).join('');
+  }
+
   function renderAnClv(c) {
     const picks = (state.picks || []).filter((p) => typeof p.clv === 'number');
     if (picks.length < 1) {
@@ -3003,6 +3031,12 @@
           <div class="col-headers" style="grid-template-columns:1fr 56px 88px 84px"><span>Sport</span><span class="r">Picks</span><span class="r">CLV moy.</span><span class="r">% pos.</span></div>
           ${sportRows.map((r) => `<div class="bet-row" style="grid-template-columns:1fr 56px 88px 84px"><div class="bet-main"><div class="bet-event">${escapeHTML(r.name)}</div></div><div class="bet-num r">${r.n}</div><div class="bet-num r ${cls(r.avg)}">${r.avg >= 0 ? '+' : ''}${r.avg} %</div><div class="bet-num r">${r.pos} %</div></div>`).join('')}
         </div>
+      </div>
+      <div class="panel"><div class="panel-head"><h2>Détail des picks mesurés</h2><span class="field-hint" style="margin:0">${n} pick${n > 1 ? 's' : ''} · triés du plus récent</span></div>
+        <div class="col-headers clv-grid">
+          <span>Match</span><span class="r hide-m">Prise</span><span class="r hide-m">Clôture</span><span class="r">CLV</span><span class="r hide-m">Proba</span><span class="r">Résultat</span>
+        </div>
+        ${clvRows(picks)}
       </div>
       <p class="calib-note"><strong>Pourquoi la CLV est ta vraie boussole ?</strong> Battre la cote de clôture veut dire que tu as parié à un meilleur prix que le marché final. C'est mathématiquement corrélé au profit long terme, même quand un pari isolé perd. Un bon parieur se juge d'abord à sa CLV, pas à ses résultats de court terme.</p>`;
 

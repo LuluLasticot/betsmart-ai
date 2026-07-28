@@ -512,6 +512,19 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
     agressif:  { cap: 0.030, kellyFraction: 0.33, label: 'Agressif (max 3 % de la bankroll)' }
   };
 
+  /** Arrondi de mise adapté à l'ordre de grandeur : 0,50 € sur une bankroll en euros,
+      mais plusieurs décimales sur une bankroll en crypto (0,048 SOL…), sinon toute
+      mise recommandée serait arrondie à zéro. */
+  function roundStake(v) {
+    if (!(v > 0)) return 0;
+    if (v >= 20) return Math.floor(v * 2) / 2;       // au demi près
+    if (v >= 2) return Math.floor(v * 10) / 10;      // au dixième
+    if (v >= 0.1) return Math.floor(v * 100) / 100;  // au centième
+    const d = Math.min(8, Math.max(3, 3 - Math.floor(Math.log10(v)))); // ~3 chiffres significatifs
+    const f = Math.pow(10, d);
+    return Math.floor(v * f) / f;
+  }
+
   function stakeFor(bankroll, pick, profileKey, mode = 'kelly') {
     const profile = PROFILES[profileKey] || PROFILES.equilibre;
     const b = pick.cote - 1;
@@ -533,7 +546,7 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
       fraction = Math.min(fraction, profile.cap);
     }
 
-    const stake = Math.max(0, Math.floor(bankroll * fraction * 2) / 2);
+    const stake = roundStake(bankroll * fraction);
     return {
       stake,
       pctBankroll: Math.round(fraction * 1000) / 10,

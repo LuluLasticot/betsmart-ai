@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v70';
+  const APP_VERSION = 'v71';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2208,7 +2208,7 @@
         const vp = (m.probabilite * c - 1) * 100;
         const st = Advisor.stakeFor(k.bankroll, { ...m, cote: c, cote_verifiee: true }, profileKey, mode).stake;
         res.className = `mycote-res ${vp >= 2 ? 'pos' : vp >= 0 ? 'zero' : 'neg'}`;
-        res.innerHTML = `value <strong>${vp >= 0 ? '+' : ''}${vp.toFixed(1)} %</strong> · mise <strong>${st > 0 ? Stats.fmtMoney(st) : '0 €'}</strong>`;
+        res.innerHTML = `value <strong>${vp >= 0 ? '+' : ''}${vp.toFixed(1)} %</strong> · mise <strong>${Stats.fmtMoney(st > 0 ? st : 0)}</strong>`;
         betBtn.textContent = `parier${st > 0 ? ' ' + Stats.fmtMoney(st) : ''}`;
       });
     });
@@ -2357,7 +2357,7 @@
         const good = valPct >= 5, ok = valPct >= 0;
         res.className = `manual-odds-result ${good ? 'pos' : ok ? 'amber' : 'neg'}`;
         res.innerHTML = ok
-          ? `value <strong>+${valPct.toFixed(1)} %</strong> · mise <strong>${m.stake > 0 ? Stats.fmtMoney(m.stake) : '0 €'}</strong>${good ? '' : ' (value faible)'}`
+          ? `value <strong>+${valPct.toFixed(1)} %</strong> · mise <strong>${Stats.fmtMoney(m.stake > 0 ? m.stake : 0)}</strong>${good ? '' : ' (value faible)'}`
           : `pas de value (<strong>${valPct.toFixed(1)} %</strong>) — à éviter`;
       });
     });

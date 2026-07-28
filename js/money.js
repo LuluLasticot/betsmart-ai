@@ -82,8 +82,12 @@ const Money = (() => {
         maximumFractionDigits: Math.abs(v) >= 1000 ? 0 : meta.decimals
       }).format(v);
     }
-    // Crypto : décimales adaptées, séparateurs français, symbole suffixé
-    const dec = Math.abs(v) >= 1 ? Math.min(meta.decimals, 4) : meta.decimals;
+    // Crypto : décimales adaptées à l'ordre de grandeur. Une mise de 0,00034 SOL
+    // doit rester lisible : on garde toujours ~3 chiffres significatifs.
+    const abs = Math.abs(v);
+    const dec = abs === 0 ? 2
+      : abs >= 1 ? Math.min(meta.decimals, 4)
+      : Math.min(8, Math.max(meta.decimals, 2 - Math.floor(Math.log10(abs))));
     const txt = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: dec }).format(v);
     return `${txt} ${meta.symbol}`;
   }

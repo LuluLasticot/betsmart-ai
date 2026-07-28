@@ -25,7 +25,7 @@
     betsPage: 1
   };
 
-  const APP_VERSION = 'v67';
+  const APP_VERSION = 'v68';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -1414,6 +1414,8 @@
     $('#settlePicks').addEventListener('click', settleRadarPicks);
     $('#loadComparator').addEventListener('click', loadComparator);
     $('#loadFixtures').addEventListener('click', loadFixtureCalendar);
+    // Quota Gemini Pro épuisé (free tier) → bascule automatique sur Flash
+    Advisor.setFallbackHandler(() => toast('Quota Gemini Pro atteint — analyse poursuivie avec Flash'));
     // Clic sur « Analyser par le Radar » d'une ligne du comparateur → analyse approfondie du match
     $('#comparatorContent').addEventListener('click', (ev) => {
       const b = ev.target.closest('.cmp-analyze');

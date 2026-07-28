@@ -17,7 +17,12 @@ const Advisor = (() => {
   /* ------------------------------------------------------------------
      Appel Gemini avec grounding + retry sur erreurs transitoires
      ------------------------------------------------------------------ */
-  async function callGemini(apiKey, model, prompt, { temperature = 0.25, retries = 2 } = {}) {
+  // Gemini 2.5 Pro est très limité en free tier (≈ 5 requêtes/min, ~50/jour) :
+  // en cas de 429 on bascule automatiquement sur Flash plutôt que d'échouer.
+  const FALLBACK_MODEL = 'gemini-2.5-flash';
+  let onFallback = null; // hook UI (app.js) pour prévenir l'utilisateur
+
+  async function callGemini(apiKey, model, prompt, { temperature = 0.25, retries = 2, allowFallback = true } = {}) {
     const body = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       tools: [{ google_search: {} }],
@@ -43,9 +48,16 @@ const Advisor = (() => {
         await new Promise((r) => setTimeout(r, 4000 * (attempt + 1)));
         continue;
       }
+      // Quota Pro épuisé → on refait la même demande avec Flash (quota bien plus large)
+      if (res.status === 429 && allowFallback && /pro/i.test(model)) {
+        onFallback?.(model, FALLBACK_MODEL);
+        return callGemini(apiKey, FALLBACK_MODEL, prompt, { temperature, retries: 1, allowFallback: false });
+      }
       const err = await res.json().catch(() => ({}));
       const msg = err?.error?.message || `Erreur API (${res.status})`;
-      throw new Error(res.status === 429 ? 'Quota API atteint — patientez une minute puis réessayez.' : msg);
+      throw new Error(res.status === 429
+        ? 'Quota Gemini atteint — le free tier limite fortement le nombre de requêtes. Patientez une minute, ou décochez « Analyse approfondie ».'
+        : msg);
     }
   }
 
@@ -494,5 +506,7 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
     };
   }
 
-  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats, feedbackBlock, PROFILES };
+  const setFallbackHandler = (fn) => { onFallback = fn; };
+
+  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats, feedbackBlock, setFallbackHandler, PROFILES };
 })();

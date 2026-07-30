@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v78';
+  const APP_VERSION = 'v79';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2054,7 +2054,7 @@
     if (facts && facts.tennis) {
       const bar = Math.round(facts.prob1);
       return `<div class="facts-box">
-        <div class="facts-head">Données réelles · <span>Elo tennis</span> · surface : ${escapeHTML(facts.surface)}${facts.updated ? ' · maj ' + escapeHTML(facts.updated) : ''}</div>
+        <div class="facts-head">Données réelles · <span>Elo tennis</span> · surface : ${escapeHTML(facts.surface)}${facts.speed ? ` · court <strong>${facts.speed.s}</strong> (${facts.speed.s >= 1.2 ? 'très rapide' : facts.speed.s >= 1.05 ? 'rapide' : facts.speed.s >= 0.95 ? 'moyen' : facts.speed.s >= 0.8 ? 'lent' : 'très lent'})` : ''}${facts.updated ? ' · maj ' + escapeHTML(facts.updated) : ''}</div>
         <div class="facts-teams">
           <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p1.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p1.elo} · ${escapeHTML(facts.p1.rank || '')}</span></div></div>
           <div class="facts-team"><div class="facts-team-name">${escapeHTML(facts.p2.name)}</div><div class="facts-form"><span class="facts-goals">Elo ${facts.p2.elo} · ${escapeHTML(facts.p2.rank || '')}</span></div></div>

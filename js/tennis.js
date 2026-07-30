@@ -59,6 +59,35 @@ const TennisElo = (() => {
 
   const rankLabel = (r) => (r && r.r ? '#' + r.r + ' ' + (r.t === 'wta' ? 'WTA' : 'ATP') : (r && r.t === 'wta' ? 'WTA' : 'ATP'));
 
+  /* ---- Vitesse de court (Tennis Abstract) : donnée réelle, pas une impression ---- */
+  let speedTable = null;
+  async function courtSpeeds() {
+    if (speedTable !== null) return speedTable;
+    try {
+      const r = await fetch('./data/court-speed.json', { cache: 'default' });
+      speedTable = r.ok ? await r.json() : false;
+    } catch (_) { speedTable = false; }
+    return speedTable;
+  }
+
+  /** Indice de rapidité du tournoi : 1.00 = moyenne du circuit. */
+  async function courtSpeed(competition) {
+    const t = await courtSpeeds();
+    if (!t || !t.courts) return null;
+    const n = norm(competition);
+    if (!n) return null;
+    const keys = Object.keys(t.courts);
+    const alias = t.aliases || {};
+    // Alias d'abord (libellés officiels/sponsorisés), puis correspondance directe
+    for (const [from, to] of Object.entries(alias)) {
+      if (n.includes(norm(from)) && t.courts[to]) return { key: to, ...t.courts[to], updated: t.updated };
+    }
+    const hit = keys.find((k) => n.includes(k));
+    return hit ? { key: hit, ...t.courts[hit], updated: t.updated } : null;
+  }
+
+  const speedLabel = (s) => (s >= 1.2 ? 'très rapide' : s >= 1.05 ? 'rapide' : s >= 0.95 ? 'proche de la moyenne' : s >= 0.8 ? 'lent' : 'très lent');
+
   async function matchFacts({ home, away, competition }) {
     if (!home || !away) return null;
     const players = await ratings();
@@ -71,16 +100,20 @@ const TennisElo = (() => {
     const surf = detectSurface(competition);
     const R1 = surfRating(p1.r, surf), R2 = surfRating(p2.r, surf);
     const prob1 = 1 / (1 + Math.pow(10, (R2 - R1) / 400));
+    const speed = await courtSpeed(competition);
     const facts = {
-      tennis: true, surface: SURF_LABEL[surf], updated: mem && mem.updated,
+      tennis: true, surface: SURF_LABEL[surf], updated: mem && mem.updated, speed,
       p1: { name: home, elo: Math.round(R1), rank: rankLabel(p1.r) },
       p2: { name: away, elo: Math.round(R2), rank: rankLabel(p2.r) },
       prob1: Math.round(prob1 * 1000) / 10, prob2: Math.round((1 - prob1) * 1000) / 10,
       source: 'elo-tennis'
     };
+    const speedLine = speed
+      ? `\n- VITESSE DU COURT (Tennis Abstract, indice réel — 1.00 = moyenne du circuit) : ${speed.s} → surface ${speedLabel(speed.s)} (${speed.s >= 1 ? Math.round((speed.s - 1) * 100) + ' % d\'aces en plus' : Math.round((1 - speed.s) * 100) + ' % d\'aces en moins'} que la moyenne). ${speed.s >= 1.05 ? 'Conditions rapides : avantage aux gros serveurs et aux joueurs agressifs, jeux courts, moins de breaks.' : speed.s <= 0.9 ? 'Conditions lentes : avantage aux relanceurs et aux joueurs d\'endurance, échanges longs, davantage de breaks.' : 'Conditions neutres.'} N'invente aucun autre indice.`
+      : '';
     facts.text = `# DONNÉES RÉELLES (Elo tennis — Tennis Abstract, surface ${SURF_LABEL[surf]}) :
 - Elo ajusté surface : ${home} ${facts.p1.elo} (${facts.p1.rank}) vs ${away} ${facts.p2.elo} (${facts.p2.rank}).
-- Probabilité MODÈLE Elo : ${home} ${facts.prob1} % / ${away} ${facts.prob2} %. Utilise-la comme ancrage statistique fort ; ne t'en écarte qu'avec un fait concret et récent (blessure, forme, abandon, tête-à-tête).`;
+- Probabilité MODÈLE Elo : ${home} ${facts.prob1} % / ${away} ${facts.prob2} %. Utilise-la comme ancrage statistique fort ; ne t'en écarte qu'avec un fait concret et récent (blessure, forme, abandon, tête-à-tête).${speedLine}`;
     return facts;
   }
 

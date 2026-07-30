@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v77';
+  const APP_VERSION = 'v78';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);

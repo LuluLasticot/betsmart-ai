@@ -11,7 +11,7 @@
   const DEFAULT_SETTINGS = () => ({
     initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', githubToken: '',
     oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly',
-    maxExposurePct: 25, notifyAlerts: false, currency: 'EUR', showEurEquiv: true
+    maxExposurePct: 25, notifyAlerts: false, currency: 'EUR', showEurEquiv: true, freeTierGuard: false
   });
   const state = {
     bets: [],
@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v76';
+  const APP_VERSION = 'v77';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -73,17 +73,22 @@
     } catch (_) { return null; }
   }
 
+  /** Garde-fous de débit : actifs uniquement si l'utilisateur est resté en free tier. */
+  function applyQuotaLimits() {
+    const guard = state.settings.freeTierGuard === true;
+    Gemini.quota.setLimits(guard ? { rpm: 5, rpd: 20 } : {});
+  }
+
   /** Consommation Gemini du jour (le free tier est la vraie ressource rare). */
   function renderQuotaInfo() {
     const el = document.getElementById('quotaInfo');
     if (!el || typeof Gemini === 'undefined' || !Gemini.quota) return;
     const u = Gemini.quota.usage();
-    const left = Math.max(0, u.rpd - u.day);
-    const scans = Math.floor(left / 2); // un scan Radar = 2 requêtes
-    el.innerHTML = `Quota Gemini (free tier) : <strong>${u.day}/${u.rpd}</strong> requêtes aujourd'hui`
-      + ` · ${left > 0 ? `≈ ${scans} scan${scans > 1 ? 's' : ''} restant${scans > 1 ? 's' : ''}` : 'épuisé — remise à zéro quotidienne'}`
-      + ` · limite ${u.rpm}/min (l'app patiente automatiquement).`;
-    el.style.color = left <= 2 ? 'var(--red)' : '';
+    const capped = isFinite(u.rpd);
+    const left = capped ? Math.max(0, u.rpd - u.day) : null;
+    el.innerHTML = `Requêtes Gemini aujourd'hui : <strong>${u.day}</strong>`
+      + (capped ? ` / ${u.rpd} (garde-fou free tier)${left > 0 ? ` · ≈ ${Math.floor(left / 2)} scan(s)` : ' · plafond atteint'}` : ' · aucune limite (facturation active)');
+    el.style.color = (capped && left <= 2) ? 'var(--red)' : '';
   }
 
   /** Remplit la liste des modèles avec ceux réellement disponibles. */
@@ -103,6 +108,7 @@
   async function init() {
     const saved = await DB.getAllSettings();
     Object.assign(state.settings, saved);
+    applyQuotaLimits();
     syncGeminiModels().catch(() => {});
     Money.setCurrency(state.settings.currency, state.settings.showEurEquiv);
     Money.ensureRates(bookCurrencies()).then(() => { applyCurrencyUI(); renderAll(); }).catch(() => {});
@@ -1772,14 +1778,6 @@
       return;
     }
 
-    // Le free tier est très limité : on prévient avant de consommer les dernières requêtes
-    const q = Gemini.quota.usage();
-    if (q.day >= q.rpd) {
-      container.innerHTML = `<div class="empty-state"><p>Quota Gemini journalier épuisé (${q.day}/${q.rpd} requêtes).</p><p class="empty-hint">Il se réinitialise chaque jour. Pour lever la limite, activez la facturation sur votre projet Google AI Studio.</p></div>`;
-      return;
-    }
-    if (q.rpd - q.day <= 2 && !confirm(`Il ne reste que ${q.rpd - q.day} requête(s) Gemini aujourd'hui, et un scan en consomme 2.\n\nLancer quand même ?`)) return;
-
     const btn = $('#runAdvisor');
     btn.disabled = true;
     const ctx = buildAdvisorCtx();
@@ -2592,6 +2590,14 @@
       renderAll();
     });
 
+    $('#setFreeTierGuard').addEventListener('change', async () => {
+      state.settings.freeTierGuard = $('#setFreeTierGuard').checked;
+      await DB.setSetting('freeTierGuard', state.settings.freeTierGuard);
+      applyQuotaLimits();
+      renderQuotaInfo();
+      toast(state.settings.freeTierGuard ? 'Garde-fous free tier activés' : 'Garde-fous retirés — aucune limite de débit');
+    });
+
     $('#setNotifyAlerts').addEventListener('change', async () => {
       const on = $('#setNotifyAlerts').checked;
       if (on) {
@@ -2691,6 +2697,7 @@
     $('#setOddsKey').value = state.settings.oddsApiKey || '';
     $('#setOddsSource').value = state.settings.oddsSource || 'coteur';
     $('#setOnlyMyBooks').checked = state.settings.onlyMyBooks !== false;
+    $('#setFreeTierGuard').checked = state.settings.freeTierGuard === true;
     $('#setNotifyAlerts').checked = state.settings.notifyAlerts === true && Notify.supported() && Notification.permission === 'granted';
     $('#setCurrency').value = state.settings.currency || 'EUR';
     $('#setEurEquiv').checked = state.settings.showEurEquiv !== false;

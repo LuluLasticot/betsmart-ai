@@ -76,8 +76,14 @@ const Gemini = (() => {
      d'enchaîner des tentatives qui échouent et le consomment pour rien.
      ------------------------------------------------------------------ */
   const CALLS_KEY = 'betsmart.geminiCalls';
-  const RPM = 5;                       // requêtes/minute (free tier)
-  const RPD = 20;                      // requêtes/jour (free tier, modèle courant)
+  // Limites ajustables : strictes en free tier, levées dès que la facturation
+  // est activée (Tier 1+). Aucun blocage dur : le compteur reste informatif.
+  let RPM = Infinity;                  // requêtes/minute tolérées avant temporisation
+  let RPD = Infinity;                  // requêtes/jour (0 = pas de plafond)
+  function setLimits({ rpm, rpd } = {}) {
+    RPM = (rpm && rpm > 0) ? rpm : Infinity;
+    RPD = (rpd && rpd > 0) ? rpd : Infinity;
+  }
 
   const readCalls = () => { try { return JSON.parse(localStorage.getItem(CALLS_KEY) || '[]'); } catch (_) { return []; } };
   const writeCalls = (a) => { try { localStorage.setItem(CALLS_KEY, JSON.stringify(a.slice(-200))); } catch (_) {} };
@@ -97,6 +103,7 @@ const Gemini = (() => {
 
   /** Attend qu'un créneau se libère plutôt que de déclencher un 429 inutile. */
   async function waitForSlot({ onWait } = {}) {
+    if (!isFinite(RPM)) return;        // facturation active → aucune temporisation
     for (let i = 0; i < 3; i++) {
       const now = Date.now();
       const recent = readCalls().filter((t) => now - t < 60e3).sort((a, b) => a - b);
@@ -119,7 +126,7 @@ const Gemini = (() => {
     return /PerDay|per day|daily/i.test(txt);
   }
 
-  const quota = { usage, recordCall, waitForSlot, retryDelayOf, isDailyQuota, RPM, RPD };
+  const quota = { usage, recordCall, waitForSlot, retryDelayOf, isDailyQuota, setLimits, get limits() { return { rpm: RPM, rpd: RPD }; } };
 
   /* ------------------------------------------------------------------
      Réglage « anti-gaspillage » de la génération

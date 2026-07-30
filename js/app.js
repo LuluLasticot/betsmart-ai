@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v81';
+  const APP_VERSION = 'v82';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -1481,6 +1481,7 @@
       $('#matchQuery').value = b.dataset.q || '';
       lastAnalyzeSport = $('#comparatorSport').value || null; // sport connu → aide le matching des faits
       lastAnalyzeComp = b.dataset.comp || null;               // compétition → surface (tennis)
+      lastAnalyzeKick = Number(b.dataset.ko) || null;         // coup d'envoi réel (coteur)
       $('#advisorContent').scrollIntoView({ behavior: 'smooth', block: 'center' });
       runMatchAnalysis();
     });
@@ -1512,7 +1513,7 @@
             <div class="bet-main">
               <div class="bet-event">${escapeHTML(e.teamA)} – ${escapeHTML(e.teamB)}</div>
               <div class="bet-meta">${escapeHTML(e.league)} · ${dateTxt}</div>
-              <button class="cmp-analyze" data-q="${escapeHTML(e.teamA + ' – ' + e.teamB)}" data-comp="${escapeHTML(e.league || '')}">◎ Analyser par le Radar</button>
+              <button class="cmp-analyze" data-q="${escapeHTML(e.teamA + ' – ' + e.teamB)}" data-comp="${escapeHTML(e.league || '')}" data-ko="${e.date ? e.date.getTime() : ''}">◎ Analyser par le Radar</button>
             </div>
             ${cell(e.odds?.home)}${(() => { const c = cell(e.odds?.draw); return c.replace('cmp-odd', 'cmp-odd hide-m'); })()}${cell(e.odds?.away)}
           </div>`;
@@ -1913,6 +1914,7 @@
   let lastMatchAnalysis = null; // { r, ctx } — pour recalculer les mises quand on change de profil Kelly
   let lastAnalyzeSport = null;  // sport du dernier match analysé (via comparateur) → matching des faits
   let lastAnalyzeComp = null;   // compétition du dernier match (surface tennis)
+  let lastAnalyzeKick = null;   // coup d'envoi réel du dernier match analysé (coteur)
 
   /** Capture d'écran d'une rencontre → extraction Gemini → champ d'analyse pré-rempli + lancement. */
   async function handleMatchImage(file) {
@@ -1964,6 +1966,11 @@
 
       const r = await Advisor.analyzeMatch(state.settings.apiKey, state.settings.model, ctx, query);
       r.facts = facts; // pour l'encart « Données réelles » de l'UI
+      // Coup d'envoi réel (coteur) : prioritaire sur l'heure estimée par l'IA
+      if (lastAnalyzeKick) {
+        r.kickoff = lastAnalyzeKick;
+        r.heure_match = new Date(lastAnalyzeKick).toTimeString().slice(0, 5);
+      }
       // Vérification des marchés au prix réel avant affichage
       if (oddsProviderReady() && r.trouve && r.marches?.length) {
         for (const m of r.marches) {
@@ -2231,7 +2238,8 @@
         const cote = m.myCote || m.cote;
         const stake = Advisor.stakeFor(k.bankroll, { ...m, cote, cote_verifiee: true }, profileKey, mode).stake;
         prefillBetFromPick({
-          date_match: r.date_match, bookmaker: m.myCote ? '' : m.bookmaker, sport: r.sport,
+          date_match: r.date_match, heure_match: r.heure_match, kickoff: r.kickoff,
+          bookmaker: m.myCote ? '' : m.bookmaker, sport: r.sport,
           competition: r.competition, match: r.match, selection: m.selection, cote
         }, stake);
       });

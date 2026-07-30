@@ -276,13 +276,18 @@ const Facts = (() => {
       // Modèle statistique (foot uniquement) : ancrage de probabilités calculées
       const model = (sk === 'football' && typeof Poisson !== 'undefined' && hForm && aForm)
         ? Poisson.fromForm(hForm, aForm) : null;
+      // Elo des clubs : second ancrage, indépendant des buts récents
+      let clubElo = null;
+      if (sk === 'football' && typeof ClubElo !== 'undefined') {
+        try { clubElo = await ClubElo.matchFacts({ home: ht ? ht.name : home, away: at ? at.name : away }); } catch (_) {}
+      }
 
       const facts = {
         homeName: ht ? ht.name : home, awayName: at ? at.name : away,
         homeForm: hForm, awayForm: aForm, h2h: duel,
         homeStanding: hStand, awayStanding: aStand, league, venue,
         homeInjuries: hInj, awayInjuries: aInj, homeLineup: hLineup, awayLineup: aLineup,
-        model, sport: sk, source: 'api-sports'
+        model, clubElo, sport: sk, source: 'api-sports'
       };
       if (!(hForm || aForm || duel || hStand || aStand || hInj || aInj)) {
         return { noData: true, reason: lastError || `aucune donnée récente (équipes trouvées : ${facts.homeName} / ${facts.awayName})` };
@@ -322,6 +327,7 @@ const Facts = (() => {
     const lus = [fmtLineup(f.homeName, f.homeLineup), fmtLineup(f.awayName, f.awayLineup)].filter(Boolean);
     if (lus.length) { lines.push('## Compositions annoncées :'); lus.forEach((l) => lines.push(l)); }
     if (f.model && typeof Poisson !== 'undefined') lines.push(Poisson.toText(f.model, f.homeName, f.awayName));
+    if (f.clubElo && f.clubElo.text) lines.push(f.clubElo.text);
     return lines.join('\n');
   }
 

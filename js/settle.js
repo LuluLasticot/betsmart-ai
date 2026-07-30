@@ -51,7 +51,14 @@ Termine ta réponse par un unique bloc \`\`\`json :
 \`\`\``;
   }
 
-  async function check(apiKey, model, pendingBets) {
+  async function check(apiKey, model, pendingBets, _retried) {
+    // Modèle retiré par Google → on redécouvre le modèle disponible et on rejoue
+    if (!_retried && typeof Gemini !== 'undefined' && Gemini.resolveModels) {
+      try {
+        const m = await Gemini.resolveModels(apiKey);
+        if (m && m.all && !m.all.includes(model)) model = m.flash;
+      } catch (_) {}
+    }
     const now = new Date().toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' });
     const body = {
       contents: [{ role: 'user', parts: [{ text: buildPrompt(pendingBets, now) }] }],
@@ -76,7 +83,14 @@ Termine ta réponse par un unique bloc \`\`\`json :
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error?.message || `Erreur API (${res.status})`);
+      const msg = err?.error?.message || `Erreur API (${res.status})`;
+      if (!_retried && typeof Gemini !== 'undefined' && Gemini.isModelGone(msg)) {
+        try {
+          const m = await Gemini.resolveModels(apiKey, { force: true });
+          if (m && m.flash && m.flash !== model) return await check(apiKey, m.flash, pendingBets, true);
+        } catch (_) {}
+      }
+      throw new Error(msg);
     }
 
     const data = await res.json();

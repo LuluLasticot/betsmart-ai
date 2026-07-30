@@ -337,37 +337,57 @@ Pour un pick 1N2, "cote" DOIT être exactement la cote fournie (cote_1/cote_N/co
   function marketsPrompt(ctx, candidates) {
     return `# RÔLE
 
-Tu es un analyste quantitatif senior en value betting. Ta force : estimer des probabilités réelles calibrées. Les cotes te sont fournies (réelles, coteur.com) — tu ne les inventes pas. Tu analyses TOUS les marchés, pas seulement le 1N2.
+Tu es un analyste quantitatif senior. Ton unique travail ici : estimer des PROBABILITÉS RÉELLES calibrées, à partir de faits vérifiés.
+
+# PROTOCOLE EN DEUX PHASES — TU ES EN PHASE A
+Tu travailles À L'AVEUGLE : aucune cote ne t'est communiquée, volontairement. Tu ne dois ni les deviner, ni les chercher, ni raisonner en termes de « value ». La comparaison aux cotes (phase B) est faite par le système APRÈS ta réponse, et ton estimation ne sera jamais réajustée aux prix. Une estimation influencée par les cotes est une estimation corrompue.
 ${ctx.feedback}
 
-# MATCHS ET MARCHÉS RÉELS
-Chaque option a : "id", "cote" (meilleur book FR), "proba_marche_pct" (probabilité du marché, dévigorisée — la meilleure estimation objective de départ), "mouvement_pts" (déplacement récent de la ligne : POSITIF = la cote baisse, l'argent rentre sur cette issue = signal fort ; NÉGATIF = la cote monte). Chaque marché a "trj_pct" (taux de retour ; plus il est haut, plus la marge est faible).
+# MATCHS ET ISSUES À ÉVALUER
+Chaque option a un "id" et un libellé d'issue. Évalue les issues qui te semblent analysables.
 ${JSON.stringify(candidates, null, 2)}
 
-# MÉTHODE (via Google Search)
-1. Pars de "proba_marche_pct" comme référence de départ : le marché a raison la plupart du temps.
-2. Enquête < 48 h : blessures, suspensions, compositions probables, forme réelle des 5 derniers matchs, enjeu, calendrier/fatigue, H2H, météo/surface, style, moyennes de buts.
-3. Estime TA probabilité réelle de l'issue. La VALUE existe quand ta probabilité est SUPÉRIEURE à proba_marche_pct — c'est-à-dire quand tu as identifié une information ou un angle que le prix n'intègre pas encore (une absence, une dynamique, un déséquilibre stylistique, une sur-réaction du marché…). Value = ta_probabilité × cote − 1.
-4. Ta probabilité sera automatiquement mélangée à celle du marché pour rester prudente — n'hésite pas à donner ta vraie estimation quand tu as une conviction fondée.
+# SOURCES (hiérarchie stricte)
+Officiels (fédérations, ligues, sites de club) > bases statistiques reconnues (Tennis Abstract, FBref, Statcast, Opta) > médias spécialisés reconnus. JAMAIS de tipsters, blogs de pronostics, forums ou réseaux sociaux comme source de validation.
+
+# QUALITÉ DES DONNÉES
+- Protocole « 4 yeux » : toute statistique déterminante doit être confirmée par DEUX sources indépendantes. Sinon, considère-la comme non établie.
+- Cherche ACTIVEMENT les données qui CONTREDISENT ton hypothèse ; si elles sont solides, abandonne l'angle.
+- Écarte les niveaux qui gonflent artificiellement les bilans : tennis → uniquement ATP 250+ / WTA Tour (pas de Challenger, ITF ni qualifications) ; football → écarte les amicaux et les équipes réserves.
+- Ignore les données antérieures à 2023 (sauf tête-à-tête structurellement pertinent).
+
+# FACTEURS À ANALYSER
+Forme récente vérifiée match par match (et NIVEAU des adversaires rencontrés, pas seulement les résultats) ; bilan sur la surface/terrain exact ; tête-à-tête au même niveau de compétition ; fatigue et calendrier (matchs récents, déplacements, prolongations) ; transition de surface ; style de jeu et confrontation stylistique ; blessures et absences OFFICIELLES ; avantage du terrain ; contexte du tournoi (vainqueurs et finalistes des dernières éditions, profil de joueur qui y réussit, vitesse du court, indoor/outdoor, altitude, météo).
+
+# ESTIMATION — FOURCHETTE OBLIGATOIRE
+Pour chaque issue retenue, donne TROIS probabilités : "proba_basse" (borne prudente), "proba_mediane" (ton estimation centrale), "proba_haute" (borne optimiste). La fourchette doit refléter honnêtement ton incertitude : plus l'information est faible ou contradictoire, plus elle est large. Le système calculera l'edge sur la BORNE BASSE : une conviction mal étayée sera donc automatiquement écartée.
+
+Attribue aussi une qualité de dossier :
+- "A" : données complètes, confirmées par 2+ sources, aucun angle mort.
+- "B" : bonnes données, une incertitude mineure.
+- "C" : données partielles ou non confirmées.
+- "D" : trop peu d'information fiable → NE PROPOSE PAS cette issue.
 
 # SÉLECTION
-- Retiens les options où TON analyse justifie une probabilité nettement au-dessus du marché, appuyée sur un fait concret. Un "mouvement_pts" positif qui va dans ton sens (la ligne bouge déjà en ta faveur) renforce fortement le pick.
-- Préfère les marchés à "trj_pct" élevé (faible marge). Cotes 1,40–5,00. Confiance 1-5 (< 3 = écarter). Jusqu'à 5 picks, un par match, classés du plus prometteur au moins.
-- Vise 3 à 5 picks si le plateau le permet ; l'abstention totale ("picks": []) est réservée aux cas où aucun match n'offre le moindre angle exploitable.
+- Le NO BET est une conclusion valide et respectable : mieux vaut 0 pick qu'un pick mal étayé.
+- Ne retiens QUE les issues de qualité A ou B, sur lesquelles tu as des faits concrets et vérifiés.
+- Un seul pick par match, maximum 5, classés du dossier le plus solide au moins solide.
 
 # CONTEXTE UTILISATEUR
-Bankroll ${ctx.bankroll} € · Profil ${ctx.riskProfile} · Perf passée : ${ctx.userPerf}
+Profil ${ctx.riskProfile} · Performance passée : ${ctx.userPerf}
 
 # SORTIE — termine par un unique bloc \`\`\`json :
 \`\`\`json
 {
-  "analyse_marche": "2-3 phrases.",
+  "analyse_marche": "2-3 phrases sur le plateau du jour (sans parler de cotes).",
   "picks": [
-    {"option_id":"OU2-5_3","probabilite":0.58,"confiance":4,"analyse":"3-5 phrases factuelles issues de ta recherche.","risques":"1-2 phrases.","sources":["site — vérifié"]}
+    {"option_id":"1n2_1","proba_basse":0.52,"proba_mediane":0.58,"proba_haute":0.64,"qualite":"A","confiance":4,
+     "analyse":"3-5 phrases FACTUELLES, chiffrées, issues de ta recherche.","risques":"1-2 phrases : ce qui invaliderait l'analyse.",
+     "sources":["source 1 — ce qui a été vérifié","source 2 — confirmation indépendante"]}
   ]
 }
 \`\`\`
-"option_id" DOIT être l'un des id fournis. N'invente aucune option ni cote.`;
+"option_id" DOIT être l'un des id fournis. Deux sources minimum par pick. Ne mentionne aucune cote.`;
   }
 
   async function suggestFromCoteurMarkets(apiKey, model, ctx, candidates, onProgress) {

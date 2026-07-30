@@ -26,7 +26,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v75';
+  const APP_VERSION = 'v76';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -1602,6 +1602,9 @@
       const picked = events
         .filter((e) => e.rencId && e.date.getTime() <= now + horizonMs && e.date.getTime() > now + 5 * 60e3)
         .filter((e) => !excluded.has(`${e.teamA} – ${e.teamB}`.toLowerCase()))
+        // Niveaux exclus : ils gonflent artificiellement les bilans et les stats
+        // n'y sont pas fiables (cf. protocole : ATP 250+/WTA Tour uniquement).
+        .filter((e) => !/challenger|\bitf\b|qualif|amical|friendly|r[ée]serve|\bu\d{2}\b|espoirs?/i.test(`${e.league || ''}`))
         .sort((a, b) => a.date - b.date)
         .slice(0, perSport);
       picked.forEach((e) => matchList.push({ ...e, sport }));
@@ -1621,7 +1624,6 @@
       const label = `${mk.home} – ${mk.away}`;
       const marches = mk.markets.map((mrk) => ({
         marche: mrk.label,
-        trj_pct: mrk.trj,
         options: mrk.options.map((o) => {
           const uid = `${m.rencId}:${o.id}`; // identifiant unique GLOBAL (match + option)
           const steam = steamFor(snap, o.id, o.fairProb); // points de proba gagnés depuis le snapshot
@@ -1633,11 +1635,10 @@
             fairProb: o.fairProb, marketEdge: o.marketEdge, steam,
             rencId: m.rencId, optionId: o.id, kickoff: m.date.getTime()
           };
-          return {
-            id: uid, selection: o.selection, cote: o.cote,
-            proba_marche_pct: o.fairProb != null ? Math.round(o.fairProb * 100) : null,
-            mouvement_pts: steam
-          };
+          // PHASE A — l'IA travaille à l'aveugle : ni cote, ni probabilité de
+          // marché, ni mouvement de ligne ne lui sont transmis. L'edge est
+          // calculé par l'app après coup (phase B). Bonus : prompt bien plus court.
+          return { id: uid, selection: o.selection };
         })
       }));
       candidates.push({ match: label, sport: m.sport, competition: m.league, date: m.date.toISOString().slice(0, 10), marches });
@@ -1677,8 +1678,17 @@
       .map((p) => {
         const info = index[p.option_id];
         if (!info) return null;
-        const gProb = Number(p.probabilite);
+
+        // PHASE B — l'app confronte l'estimation aveugle aux cotes réelles.
+        // Edge CONSERVATEUR : on retient la BORNE BASSE de la fourchette. Une
+        // conviction mal étayée (fourchette large) est donc écartée d'office.
+        const low = Number(p.proba_basse);
+        const med = Number(p.proba_mediane ?? p.probabilite);
+        const gProb = (low > 0 && low < 1) ? low : med;
         if (!(gProb > 0 && gProb < 1)) return null;
+        // Qualité de dossier : A/B seulement (D = information insuffisante)
+        const grade = String(p.qualite || 'B').toUpperCase();
+        if (grade === 'C' || grade === 'D') return null;
 
         // Probabilité finale = ancrage sur le marché (dévig sharp) + apport
         // de l'analyse Gemini. Le poids du marché est ajusté par la calibration
@@ -1688,6 +1698,10 @@
         const value = prob * info.cote - 1;
 
         return {
+          qualite: grade,
+          probaBasse: low > 0 ? low : null,
+          probaMediane: med > 0 ? med : null,
+          probaHaute: Number(p.proba_haute) > 0 ? Number(p.proba_haute) : null,
           sport: info.sport, competition: info.competition, match: info.match,
           date_match: info.date_match, heure_match: info.heure_match,
           marche: info.marche, selection: info.selection,
@@ -2290,6 +2304,7 @@
           <div>
             <span class="pick-value-badge ${p.marginal ? 'est' : ''}">value ${Number(p.value_pct) >= 0 ? '+' : ''}${Number(p.value_pct).toFixed(1)} %</span>
             ${p.conviction ? `<span class="pick-value-badge ${p.conviction === 'forte' ? 'live' : p.conviction === 'correcte' ? '' : 'est'}" title="Niveau de conviction du Radar">${p.conviction === 'forte' ? 'conviction forte' : p.conviction === 'correcte' ? 'value confirmée' : 'conviction modérée'}</span>` : ''}
+            ${p.qualite ? `<span class="pick-value-badge ${p.qualite === 'A' ? 'live' : ''}" title="Qualité du dossier : A = données complètes confirmées par 2+ sources indépendantes, B = une incertitude mineure">dossier ${escapeHTML(p.qualite)}${p.probaBasse && p.probaHaute ? ` · ${Math.round(p.probaBasse * 100)}–${Math.round(p.probaHaute * 100)} %` : ''}</span>` : ''}
             ${typeof p.steam === 'number' && Math.abs(p.steam) >= 1.5 ? `<span class="pick-value-badge ${p.steam > 0 ? 'steam-up' : 'steam-down'}" title="Mouvement de la ligne depuis le dernier relevé">${p.steam > 0 ? '↑ cote qui baisse' : '↓ cote qui monte'} ${p.steam > 0 ? '+' : ''}${p.steam.toFixed(1)} pts</span>` : ''}
             ${coteBadge}
           </div>

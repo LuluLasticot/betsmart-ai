@@ -1,12 +1,12 @@
 {
-  "updated": "2026-07-13",
+  "updated": "2026-07-20",
   "source": "Tennis Abstract — ATP Surface Speed Ratings (52 dernières semaines)",
   "method": "Indice basé sur le taux d'aces ajusté des serveurs et relanceurs de chaque match. 1.00 = moyenne du circuit ; 1.25 = 25 % d'aces en plus que sur une surface moyenne. Intègre indirectement température, humidité, vent, balles et surface.",
   "tour": "atp",
   "note": "Aucune table WTA publiée : pour un tournoi féminin disputé sur le même site, l'indice ATP est une approximation à traiter comme indicative.",
   "courts": {
     "dallas": {
-      "s": 1.46,
+      "s": 1.45,
       "surface": "Hard"
     },
     "basel": {
@@ -25,10 +25,6 @@
       "s": 1.35,
       "surface": "Hard"
     },
-    "stuttgart": {
-      "s": 1.31,
-      "surface": "Grass"
-    },
     "dubai": {
       "s": 1.31,
       "surface": "Hard"
@@ -37,15 +33,23 @@
       "s": 1.31,
       "surface": "Hard"
     },
-    "delray beach": {
+    "stuttgart": {
       "s": 1.3,
+      "surface": "Grass"
+    },
+    "delray beach": {
+      "s": 1.29,
       "surface": "Hard"
     },
     "next gen finals": {
-      "s": 1.27,
+      "s": 1.28,
       "surface": "Hard"
     },
     "metz": {
+      "s": 1.27,
+      "surface": "Hard"
+    },
+    "hangzhou": {
       "s": 1.26,
       "surface": "Hard"
     },
@@ -54,18 +58,14 @@
       "surface": "Grass"
     },
     "vienne": {
-      "s": 1.22,
-      "surface": "Hard"
-    },
-    "hangzhou": {
-      "s": 1.19,
-      "surface": "Hard"
-    },
-    "cincinnati": {
-      "s": 1.18,
+      "s": 1.23,
       "surface": "Hard"
     },
     "miami": {
+      "s": 1.18,
+      "surface": "Hard"
+    },
+    "cincinnati": {
       "s": 1.18,
       "surface": "Hard"
     },
@@ -73,43 +73,39 @@
       "s": 1.18,
       "surface": "Grass"
     },
-    "brisbane": {
+    "tokyo": {
       "s": 1.17,
       "surface": "Hard"
     },
-    "tokyo": {
-      "s": 1.17,
+    "brisbane": {
+      "s": 1.16,
       "surface": "Hard"
     },
     "halle": {
       "s": 1.15,
       "surface": "Grass"
     },
+    "indian wells": {
+      "s": 1.14,
+      "surface": "Hard"
+    },
     "wimbledon": {
-      "s": 1.13,
+      "s": 1.11,
       "surface": "Grass"
     },
-    "indian wells": {
-      "s": 1.12,
-      "surface": "Hard"
-    },
-    "acapulco": {
-      "s": 1.12,
-      "surface": "Hard"
-    },
-    "open d australie": {
-      "s": 1.12,
+    "chengdu": {
+      "s": 1.11,
       "surface": "Hard"
     },
     "shanghai": {
-      "s": 1.09,
+      "s": 1.11,
       "surface": "Hard"
     },
-    "chengdu": {
-      "s": 1.09,
+    "open d australie": {
+      "s": 1.1,
       "surface": "Hard"
     },
-    "almaty": {
+    "acapulco": {
       "s": 1.08,
       "surface": "Hard"
     },
@@ -117,8 +113,12 @@
       "s": 1.08,
       "surface": "Hard"
     },
-    "washington": {
+    "almaty": {
       "s": 1.08,
+      "surface": "Hard"
+    },
+    "washington": {
+      "s": 1.07,
       "surface": "Hard"
     },
     "auckland": {
@@ -133,33 +133,33 @@
       "s": 1.05,
       "surface": "Clay"
     },
-    "winston salem": {
-      "s": 1.03,
-      "surface": "Hard"
-    },
     "queen s club": {
-      "s": 1.03,
+      "s": 1.02,
       "surface": "Grass"
     },
     "hong kong": {
-      "s": 1.01,
+      "s": 1.02,
+      "surface": "Hard"
+    },
+    "winston salem": {
+      "s": 1.0,
       "surface": "Hard"
     },
     "canada": {
-      "s": 0.97,
+      "s": 0.98,
       "surface": "Hard"
     },
     "us open": {
-      "s": 0.97,
+      "s": 0.98,
       "surface": "Hard"
+    },
+    "rio de janeiro": {
+      "s": 0.97,
+      "surface": "Clay"
     },
     "pekin": {
       "s": 0.95,
       "surface": "Hard"
-    },
-    "rio de janeiro": {
-      "s": 0.95,
-      "surface": "Clay"
     },
     "s hertogenbosch": {
       "s": 0.95,
@@ -169,36 +169,32 @@
       "s": 0.95,
       "surface": "Hard"
     },
-    "doha": {
+    "gstaad": {
+      "s": 0.92,
+      "surface": "Clay"
+    },
+    "stockholm": {
       "s": 0.91,
       "surface": "Hard"
     },
-    "gstaad": {
-      "s": 0.9,
-      "surface": "Clay"
-    },
     "rotterdam": {
-      "s": 0.89,
+      "s": 0.9,
       "surface": "Hard"
     },
     "madrid": {
-      "s": 0.88,
+      "s": 0.89,
       "surface": "Clay"
+    },
+    "doha": {
+      "s": 0.87,
+      "surface": "Hard"
     },
     "kitzbuhel": {
-      "s": 0.88,
+      "s": 0.8,
       "surface": "Clay"
     },
-    "los cabos": {
-      "s": 0.88,
-      "surface": "Hard"
-    },
-    "stockholm": {
-      "s": 0.86,
-      "surface": "Hard"
-    },
     "houston": {
-      "s": 0.78,
+      "s": 0.77,
       "surface": "Clay"
     },
     "santiago": {
@@ -206,11 +202,11 @@
       "surface": "Clay"
     },
     "bastad": {
-      "s": 0.72,
+      "s": 0.69,
       "surface": "Clay"
     },
     "umag": {
-      "s": 0.69,
+      "s": 0.68,
       "surface": "Clay"
     },
     "geneve": {
@@ -222,7 +218,7 @@
       "surface": "Clay"
     },
     "rome": {
-      "s": 0.63,
+      "s": 0.64,
       "surface": "Clay"
     },
     "monte carlo": {
@@ -246,6 +242,10 @@
       "surface": "Clay"
     },
     "buenos aires": {
+      "s": 0.49,
+      "surface": "Clay"
+    },
+    "estoril": {
       "s": 0.49,
       "surface": "Clay"
     }

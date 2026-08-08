@@ -188,23 +188,42 @@ const Coteur = (() => {
     return out;
   }
 
-  async function getMatchList(sportPage) {
-    const cached = listCache.get(sportPage);
-    if (cached && Date.now() - cached.at < 300e3) return cached.matches;
-
+  async function fetchListPage(sportPage, page) {
     let html = '';
     if (await hasBackend()) {
       try {
-        const r = await fetch(`/api/coteur?type=list&page=${encodeURIComponent(sportPage)}`);
+        const r = await fetch(`/api/coteur?type=list&page=${encodeURIComponent(sportPage)}${page > 1 ? `&p=${page}` : ''}`);
         const j = await r.json();
         html = j.ok ? j.html : '';
       } catch (_) { /* repli proxies */ }
     }
-    if (!html) html = await proxyFetch(`${COTEUR}/${sportPage}`);
+    if (!html) html = await proxyFetch(`${COTEUR}/${sportPage}${page > 1 ? `?page=${page}` : ''}`);
+    return parseMatchList(html);
+  }
 
-    const matches = parseMatchList(html);
-    listCache.set(sportPage, { at: Date.now(), matches });
-    return matches;
+  /** Liste des matchs d'un sport. coteur pagine par ~15 matchs : on parcourt
+      plusieurs pages pour ne pas manquer les rencontres imminentes. */
+  async function getMatchList(sportPage, { pages = 4 } = {}) {
+    const ck = `${sportPage}|${pages}`;
+    const cached = listCache.get(ck);
+    if (cached && Date.now() - cached.at < 300e3) return cached.matches;
+
+    const all = [];
+    const seen = new Set();
+    for (let p = 1; p <= pages; p++) {
+      let batch = [];
+      try { batch = await fetchListPage(sportPage, p); } catch (_) { break; }
+      if (!batch.length) break;                       // plus de résultats
+      let added = 0;
+      for (const m of batch) {
+        const key = String(m.rencId || `${m.teamA}|${m.teamB}|${m.date}`);
+        if (seen.has(key)) continue;
+        seen.add(key); all.push(m); added++;
+      }
+      if (!added) break;                              // page identique → fin
+    }
+    listCache.set(ck, { at: Date.now(), matches: all });
+    return all;
   }
 
   /* ------------------------------------------------------------------
@@ -383,8 +402,10 @@ const Coteur = (() => {
     const allowed = allowedSet(books);
     const page = SPORT_PAGES[norm(sport).split(' ')[0]];
     if (!page) return []; // sport non couvert par coteur
+    // Seuls les matchs À VENIR : un match déjà commencé n'est plus pariable
+    // et occupe inutilement la liste. Marge de 2 min pour l'imminent.
     const matches = (await getMatchList(page))
-      .filter((m) => m.date.getTime() > Date.now() - 3 * 3600e3)
+      .filter((m) => m.date.getTime() > Date.now() + 2 * 60e3)
       .sort((a, b) => a.date - b.date)
       .slice(0, limit);
 

@@ -59,7 +59,9 @@ module.exports = async (req, res) => {
 
     if (type === 'list') {
       if (!PAGE_RE.test(page)) return res.status(400).json({ ok: false, error: 'page invalide' });
-      const r = await fetch(`${COTEUR}/${page}`, {
+      const pg = parseInt(req.query.p, 10);
+      const url = `${COTEUR}/${page}` + (pg > 1 ? `?page=${pg}` : '');
+      const r = await fetch(url, {
         headers: { 'User-Agent': UA, 'Accept-Language': 'fr-FR,fr;q=0.9', 'Accept': 'text/html' }
       });
       const html = await r.text();

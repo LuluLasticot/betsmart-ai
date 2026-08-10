@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v85';
+  const APP_VERSION = 'v86';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2193,6 +2193,7 @@
 
     try {
       const ctx = buildAdvisorCtx();
+      lastAnalyzeAnchor = null;
       // Faits réels et récents (forme, buts, H2H, classement) → base factuelle du prompt (anti-invention)
       const parts = query.split(/\s+[–—-]\s+|\s+vs\.?\s+/i);
       const home = (parts[0] || '').trim(), away = (parts[1] || '').trim();
@@ -2204,6 +2205,18 @@
           try { facts = await TennisElo.matchFacts({ home, away, competition: lastAnalyzeComp || query }); } catch (_) {}
         } else if (state.settings.apiFootballKey && typeof Facts !== 'undefined') {
           try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
+        }
+        // Repli sur les tables d'ancrage : elles ne dépendent ni d'une clé ni
+        // d'un quota. Indispensable quand api-sports échoue (clé invalide,
+        // quota épuisé) ou ne couvre pas le sport.
+        if ((!facts || facts.noData) && typeof Anchor !== 'undefined') {
+          try {
+            const anc = await Anchor.forMatch({ sport: lastAnalyzeSport, home, away, competition: lastAnalyzeComp || query });
+            if (anc) {
+              lastAnalyzeAnchor = anc;
+              facts = { anchored: true, text: `# DONNÉES RÉELLES VÉRIFIÉES (${anc.source}) :\n- ${anc.blind}\nCes mesures sont acquises : ne les recontrôle pas, et ne les contredis qu'avec un fait récent et précis.` };
+            }
+          } catch (_) {}
         }
       }
       ctx.matchFacts = (facts && facts.text) ? facts.text : '';
@@ -2301,6 +2314,8 @@
   }
 
   /** Encart « Données réelles » (API-Football) affiché dans l'analyse d'un match. */
+  let lastAnalyzeAnchor = null;   // ancrage du dernier match analysé (garde-fou d'affichage)
+
   function matchFactsHTML(facts) {
     if (facts && facts.tennis) {
       const bar = Math.round(facts.prob1);
@@ -2387,7 +2402,11 @@
     const mode = state.settings.stakingMode || 'kelly';
     const k = Stats.kpis(state.bets, effInitial(), state.txs);
     // Verdict basé sur les cotes RÉELLES vérifiées (pas sur les cotes estimées par le modèle)
-    const hasRealValue = (r.marches || []).some((m) => m.cote_verifiee !== false && Number(m.value_pct) >= 2);
+    const hasRealValue = (r.marches || []).some((m) => {
+      if (m.cote_verifiee === false || Number(m.value_pct) < 2) return false;
+      if (!lastAnalyzeAnchor) return true;
+      try { return Anchor.check(lastAnalyzeAnchor, r.match || '', m.marche, m.selection, m.probabilite).ok; } catch (_) { return true; }
+    });
     const factsHTML = matchFactsHTML(r.facts);
 
     container.innerHTML = `<div class="pick-card">
@@ -2412,14 +2431,19 @@
       <div class="markets-table">
         ${(r.marches || []).map((m, i) => {
           const verified = m.cote_verifiee !== false;   // cote confrontée à un vrai book FR
-          const good = verified && m.value_pct >= 2;      // vraie value (+EV net)
-          const playable = verified && m.value_pct >= 0;  // pas -EV + cote réelle → mise Kelly
-          const stake = verified ? Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake : 0;
+          // GARDE-FOU : confrontation au modèle quantitatif, comme dans le scan.
+          let mGuard = { ok: true, modelProb: null };
+          if (lastAnalyzeAnchor) {
+            try { mGuard = Anchor.check(lastAnalyzeAnchor, r.match || '', m.marche, m.selection, m.probabilite); } catch (_) {}
+          }
+          const good = verified && m.value_pct >= 2 && mGuard.ok;   // vraie value (+EV net)
+          const playable = verified && m.value_pct >= 0 && mGuard.ok;
+          const stake = (verified && mGuard.ok) ? Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake : 0;
           const bookTxt = m.live ? ' · ✓ direct' : m.notMyBook ? ` · ${escapeHTML(m.bookmaker || '')} (hors de vos books)` : verified ? '' : ' · cote estimée, non vérifiée';
           return `<div class="market-row">
             <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')}${verified ? ' · ' + escapeHTML(m.bookmaker || '') : ''}${bookTxt}</div></div>
             <div class="bet-num">${Number(m.cote).toFixed(2)}</div>
-            <div class="bet-num hide-m">${Math.round(m.probabilite * 100)} %</div>
+            <div class="bet-num hide-m">${Math.round(m.probabilite * 100)} %${mGuard.modelProb != null ? `<div class="model-mini" title="Probabilité indépendante du modèle quantitatif (${escapeHTML(lastAnalyzeAnchor.source)})">modèle ${Math.round(mGuard.modelProb * 100)} %</div>` : ''}</div>
             ${verified
               ? `<div class="bet-profit market-val ${good ? 'pos' : m.value_pct >= 0 ? 'zero' : 'neg'}">
                   <span>${m.value_pct >= 0 ? '+' : ''}${Number(m.value_pct).toFixed(1)} %</span>
@@ -2427,6 +2451,7 @@
                 </div>`
               : `<div class="bet-profit market-val zero"><span class="market-unverified">non vérifiée</span></div>`}
             <div class="avis">
+              ${!mGuard.ok ? `<div class="avis-guard">⚠ Écarté par le garde-fou : ${escapeHTML(mGuard.reason || '')}.</div>` : ''}
               <div class="avis-text">${escapeHTML(m.avis || '')}</div>
               <div class="mycote-row">
                 <span class="mycote-lbl">Ta cote</span>

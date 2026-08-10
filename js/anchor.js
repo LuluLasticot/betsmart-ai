@@ -80,6 +80,7 @@ const Anchor = (() => {
     const pHome = normCdf(margin / sigma);
     return {
       sport: 'basketball', source: `Basketball-Reference ${t.season}`, updated: t.updated,
+      teams: { home: [home, H.key], away: [away, A.key] },
       prob: { home: pHome, draw: null, away: 1 - pHome },
       margin: Math.round(margin * 10) / 10,
       // Phase A : uniquement les notes brutes, jamais la marge ni la probabilité.
@@ -103,6 +104,7 @@ const Anchor = (() => {
     p = Math.max(0.05, Math.min(0.95, p + (t.hfa ?? 0.04)));
     return {
       sport: 'baseball', source: `MLB StatsAPI ${t.season}`, updated: t.updated,
+      teams: { home: [home, H.key], away: [away, A.key] },
       prob: { home: p, draw: null, away: 1 - p },
       quality: 'low',   // le partant n'est pas dans la table → prudence accrue
       blind: `Niveau d'équipe ${t.season} — ${home} : ${H.rpg_for} points marqués et ${H.rpg_ag} encaissés par match, bilan ${H.w}-${H.l} · ${away} : ${A.rpg_for} marqués, ${A.rpg_ag} encaissés, bilan ${A.w}-${A.l}. Le lanceur partant n'est PAS inclus : vérifie-le, il pèse plus que tout le reste.`
@@ -119,6 +121,7 @@ const Anchor = (() => {
     if (!f || !f.clubElo) return null;
     return {
       sport: 'football', source: 'Club Elo', updated: f.updated,
+      teams: { home: [home, f.home.name], away: [away, f.away.name] },
       prob: { home: f.p1 / 100, draw: f.pX / 100, away: f.p2 / 100 },
       blind: `Elo des clubs — ${f.home.name} ${f.home.elo}${f.home.level ? ` (D${f.home.level} ${f.home.country})` : ''} vs ${f.away.name} ${f.away.elo}${f.away.level ? ` (D${f.away.level} ${f.away.country})` : ''}. L'Elo intègre le niveau des adversaires rencontrés, pas seulement les résultats.`
     };
@@ -137,6 +140,7 @@ const Anchor = (() => {
       : '';
     return {
       sport: 'tennis', source: 'Tennis Abstract (Elo par surface)', updated: f.updated,
+      teams: { home: [home, f.p1.name], away: [away, f.p2.name] },
       prob: { home: f.prob1 / 100, draw: null, away: f.prob2 / 100 },
       blind: `Elo ajusté à la surface (${f.surface}) — ${f.p1.name} ${f.p1.elo} (${f.p1.rank}) vs ${f.p2.name} ${f.p2.elo} (${f.p2.rank}).${speed}`
     };
@@ -180,17 +184,43 @@ const Anchor = (() => {
 
   /** Quelle issue du modèle correspond à cette sélection ? null si non couverte
       (over/under, handicap… : le garde-fou ne s'applique qu'au vainqueur/1N2). */
+  const NOISE = new Set(['fc', 'cf', 'ac', 'sc', 'as', 'de', 'la', 'le', 'les', 'du', 'des', 'victoire', 'vainqueur', 'win']);
+  const words = (s) => norm(s).split(' ').filter((w) => w.length >= 2 && !NOISE.has(w));
+
+  /** Score de proximité entre une sélection et un camp : nombre de mots communs,
+      en tolérant les abréviations (« BOS Red Sox » vs « Boston Red Sox » →
+      « bos » est un préfixe de « boston »). C'est le cas courant en MLB et NBA,
+      où coteur abrège la ville et l'IA écrit le nom complet. */
+  function affinity(selection, candidates) {
+    const sw = words(selection);
+    if (!sw.length) return 0;
+    let best = 0;
+    for (const c of candidates.filter(Boolean)) {
+      const cw = words(c);
+      if (!cw.length) continue;
+      let hits = 0;
+      for (const w of sw) {
+        if (cw.some((x) => x === w || (w.length >= 3 && x.startsWith(w)) || (x.length >= 3 && w.startsWith(x)))) hits++;
+      }
+      best = Math.max(best, hits / Math.min(sw.length, cw.length));
+    }
+    return best;
+  }
+
   function outcomeFor(anchor, matchLabel, marche, selection) {
     if (!anchor) return null;
-    if (!/^(1n2|12|vainqueur|winner|moneyline)/i.test(String(marche || ''))) return null;
-    const parts = splitMatch(matchLabel);
-    if (!parts) return null;
-    const sel = norm(selection), h = norm(parts.home), a = norm(parts.away);
+    if (!/(1n2|^12$|vainqueur|winner|moneyline)/i.test(String(marche || ''))) return null;
+    const sel = norm(selection);
     if (/^(nul|draw|match nul|x|n)$/.test(sel)) return anchor.prob.draw != null ? anchor.prob.draw : null;
-    const hitH = sel.includes(h) || h.includes(sel);
-    const hitA = sel.includes(a) || a.includes(sel);
-    if (hitH && !hitA) return anchor.prob.home;
-    if (hitA && !hitH) return anchor.prob.away;
+    // Un handicap ou un total n'est pas l'issue « vainqueur » : ne pas rapprocher.
+    if (/[+-]\s*\d|\bover\b|\bunder\b|plus de|moins de/i.test(String(selection))) return null;
+
+    const parts = splitMatch(matchLabel) || {};
+    const t = anchor.teams || {};
+    const sh = affinity(selection, [parts.home, ...(t.home || [])]);
+    const sa = affinity(selection, [parts.away, ...(t.away || [])]);
+    if (sh >= 0.5 && sh > sa) return anchor.prob.home;
+    if (sa >= 0.5 && sa > sh) return anchor.prob.away;
     return null;
   }
 

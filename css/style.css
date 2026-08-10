@@ -1471,3 +1471,6 @@ kbd {
 .guard-note summary::-webkit-details-marker { color: var(--text-dim); }
 .guard-list { margin: 0; padding-left: 18px; font-size: 13px; }
 .guard-list li { margin-bottom: 8px; line-height: 1.45; }
+
+.model-mini { font-size: 11px; color: var(--text-dim); font-weight: 500; margin-top: 2px; }
+.avis-guard { color: var(--amber); font-size: 12.5px; line-height: 1.4; margin-bottom: 6px; }

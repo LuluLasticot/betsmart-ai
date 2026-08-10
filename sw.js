@@ -1,6 +1,6 @@
 /* BetSmart AI — Service Worker
    Stratégie : cache-first pour le shell, network-first pour les CDN. */
-const CACHE = 'betsmart-v84';
+const CACHE = 'betsmart-v85';
 const SHELL = [
   './',
   './index.html',
@@ -18,9 +18,12 @@ const SHELL = [
   './js/coteur.js',
   './js/poisson.js',
   './js/clubelo.js',
+  './js/anchor.js',
   './js/facts.js',
   './js/tennis.js',
   './data/tennis-elo.json',
+  './data/basket-ratings.json',
+  './data/mlb-ratings.json',
   './data/court-speed.json',
   './data/club-elo.json',
   './js/advisor.js',

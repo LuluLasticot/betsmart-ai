@@ -345,7 +345,14 @@ ${ctx.feedback}
 
 # MATCHS ET ISSUES À ÉVALUER
 Chaque option a un "id" et un libellé d'issue. Évalue les issues qui te semblent analysables.
+Quand un match porte un champ "donnees_verifiees", ce sont des MESURES RÉELLES issues de bases de référence (Elo, efficacité, niveau d'équipe), déjà vérifiées : traite-les comme acquises, ne les recontrôle pas, et ne les contredis qu'avec un fait récent et précis (blessure officielle, forfait, changement d'effectif).
 ${JSON.stringify(candidates, null, 2)}
+
+# GRILLE D'ANALYSE PROPRE AU SPORT — applique celle du match traité
+- FOOTBALL : buts attendus (xG) créés et concédés sur les 6 derniers matchs, pas les buts réels ; qualité de l'adversité ; blessures et suspensions des titulaires du onze type ; rotation en cas de match européen à J−3 ; enjeu réel (maintien acquis, priorité coupe). Le nul est structurellement sous-estimé par l'intuition : ~26 % des matchs des grands championnats.
+- TENNIS : l'Elo par surface prime sur le classement ATP/WTA. % de points gagnés derrière la 1re et la 2e balle, % de balles de break sauvées et converties, sur les 12 derniers mois et sur CETTE surface. Confrontation stylistique (gros serveur contre relanceur) croisée avec la vitesse du court. Fatigue : durée des matchs précédents du tournoi, transition de surface récente. Écarte Challenger, ITF et qualifications, y compris dans les tête-à-tête.
+- BASKET : efficacité offensive et défensive pour 100 possessions plutôt que les points par match, qui dépendent du rythme. Absences déclarées au rapport de blessures officiel — l'absence d'un joueur majeur vaut plusieurs points de marge. Back-to-back et déplacement long. Le rythme (possessions par match) détermine les totaux, pas le vainqueur.
+- BASEBALL : le LANCEUR PARTANT annoncé domine tout le reste — son FIP, ses manches lancées, son historique récent. Sans partant confirmé pour les deux camps, abstiens-toi. Ensuite : état du bullpen (manches lancées les 3 derniers jours), effets du stade (dimensions, altitude), vent et température, avantage gaucher/droitier. Le baseball est le sport le plus aléatoire de la sélection : même la meilleure équipe perd 4 matchs sur 10, donc les probabilités extrêmes y sont presque toujours fausses.
 
 # SOURCES (hiérarchie stricte)
 Officiels (fédérations, ligues, sites de club) > bases statistiques reconnues (Tennis Abstract, FBref, Statcast, Opta) > médias spécialisés reconnus. JAMAIS de tipsters, blogs de pronostics, forums ou réseaux sociaux comme source de validation.

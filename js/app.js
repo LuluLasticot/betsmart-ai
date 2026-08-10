@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v84';
+  const APP_VERSION = 'v85';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -1852,6 +1852,12 @@
       let snap = null;
       try { snap = Cloud.getOddsSnapshot ? await Cloud.getOddsSnapshot(m.rencId) : null; } catch (_) {}
       const label = `${mk.home} – ${mk.away}`;
+      // ANCRAGE : faits bruts (Elo, efficacité, niveau d'équipe) issus des tables
+      // statiques. Aucun appel réseau facturé, aucune cote — compatible phase A.
+      let anchor = null;
+      try {
+        anchor = await Anchor.forMatch({ sport: m.sport, home: mk.home, away: mk.away, competition: m.league });
+      } catch (_) {}
       const marches = mk.markets.map((mrk) => ({
         marche: mrk.label,
         options: mrk.options.map((o) => {
@@ -1863,7 +1869,7 @@
             heure_match: m.date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
             marche: mrk.label, selection: o.selection, cote: o.cote, bookmaker: o.book, mine: o.mine,
             fairProb: o.fairProb, marketEdge: o.marketEdge, steam,
-            rencId: m.rencId, optionId: o.id, kickoff: m.date.getTime()
+            rencId: m.rencId, optionId: o.id, kickoff: m.date.getTime(), anchor
           };
           // PHASE A — l'IA travaille à l'aveugle : ni cote, ni probabilité de
           // marché, ni mouvement de ligne ne lui sont transmis. L'edge est
@@ -1871,7 +1877,11 @@
           return { id: uid, selection: o.selection };
         })
       }));
-      candidates.push({ match: label, sport: m.sport, competition: m.league, date: m.date.toISOString().slice(0, 10), marches });
+      const cand = { match: label, sport: m.sport, competition: m.league, date: m.date.toISOString().slice(0, 10), marches };
+      // Les faits bruts vont à l'IA ; la probabilité du modèle reste côté app
+      // (phase B) pour ne pas contaminer l'estimation indépendante.
+      if (anchor && anchor.blind) cand.donnees_verifiees = anchor.blind;
+      candidates.push(cand);
     }
     return { candidates, index };
   }
@@ -1904,6 +1914,7 @@
 
   /** Reconstruit des picks complets à partir des option_id choisis par Gemini. */
   function mapCoteurMarketPicks(rawResult, index, marketWeight = 0.65) {
+    const rejected = [];   // picks écartés par le garde-fou (affichés à l'utilisateur)
     const picks = (rawResult.picks || [])
       .map((p) => {
         const info = index[p.option_id];
@@ -1919,6 +1930,15 @@
         // Qualité de dossier : A/B seulement (D = information insuffisante)
         const grade = String(p.qualite || 'B').toUpperCase();
         if (grade === 'C' || grade === 'D') return null;
+
+        // GARDE-FOU MODÈLE : une estimation très supérieure à celle du modèle
+        // quantitatif est écartée. C'est exactement le profil des picks
+        // « +10-20 % d'edge » qui ont fait −58 % de ROI au backtest.
+        let guard = { ok: true, modelProb: null, gap: null };
+        if (info.anchor) {
+          try { guard = Anchor.check(info.anchor, info.match, info.marche, info.selection, gProb); } catch (_) {}
+          if (!guard.ok) { rejected.push({ match: info.match, selection: info.selection, reason: guard.reason }); return null; }
+        }
 
         // Probabilité finale = ancrage sur le marché (dévig sharp) + apport
         // de l'analyse Gemini. Le poids du marché est ajusté par la calibration
@@ -1939,6 +1959,7 @@
           probabilite: prob, probaGemini: gProb, probaMarche: fair,
           value_pct: Math.round(value * 1000) / 10,
           marketEdge: info.marketEdge, steam: info.steam,
+          probaModele: guard.modelProb, modeleSource: info.anchor ? info.anchor.source : null,
           coteurRef: { rencId: info.rencId, optionId: info.optionId }, kickoff: info.kickoff,
           confiance: p.confiance || 3, analyse: p.analyse || '', risques: p.risques || '',
           sources: p.sources || [],
@@ -1977,7 +1998,7 @@
     const finalPicks = strong.length ? strong.slice(0, 5) : unique.slice(0, 4);
     const marginalOnly = strong.length === 0 && finalPicks.length > 0;
 
-    return { analyse_marche: rawResult.analyse_marche || '', picks: finalPicks, coteurMarkets: true, marketWeight, marginalOnly };
+    return { analyse_marche: rawResult.analyse_marche || '', picks: finalPicks, coteurMarkets: true, marketWeight, marginalOnly, rejected };
   }
 
   function renderRadarProgress(step) {
@@ -2480,6 +2501,14 @@
       html += `<div class="market-note">${escapeHTML(result.analyse_marche)}</div>`;
     }
 
+    if (result.rejected && result.rejected.length) {
+      const n = result.rejected.length;
+      html += `<details class="market-note guard-note"><summary><strong>${n} pick${n > 1 ? 's' : ''} écarté${n > 1 ? 's' : ''}</strong> par le garde-fou du modèle</summary>`
+        + '<p class="empty-hint" style="margin:8px 0 6px">Ces estimations s\'écartaient trop du modèle quantitatif sans fait nouveau pour le justifier — le profil exact des picks qui ont le plus perdu au backtest.</p><ul class="guard-list">'
+        + result.rejected.map((r) => `<li><strong>${escapeHTML(r.selection)}</strong> — ${escapeHTML(r.match)}<br><span class="empty-hint">${escapeHTML(r.reason || '')}</span></li>`).join('')
+        + '</ul></details>';
+    }
+
     if (!result.picks.length) {
       html += '<div class="empty-state"><p><strong>Aucun angle exploitable</strong> sur la période — aucun match n\'offrait de piste suffisamment solide.</p><p class="empty-hint">Relancez plus tard ou élargissez la fenêtre à 72 h (plus de matchs à analyser).</p></div>';
       container.innerHTML = html;
@@ -2534,6 +2563,7 @@
             <span class="pick-value-badge ${p.marginal ? 'est' : ''}">value ${Number(p.value_pct) >= 0 ? '+' : ''}${Number(p.value_pct).toFixed(1)} %</span>
             ${p.conviction ? `<span class="pick-value-badge ${p.conviction === 'forte' ? 'live' : p.conviction === 'correcte' ? '' : 'est'}" title="Niveau de conviction du Radar">${p.conviction === 'forte' ? 'conviction forte' : p.conviction === 'correcte' ? 'value confirmée' : 'conviction modérée'}</span>` : ''}
             ${p.qualite ? `<span class="pick-value-badge ${p.qualite === 'A' ? 'live' : ''}" title="Qualité du dossier : A = données complètes confirmées par 2+ sources indépendantes, B = une incertitude mineure">dossier ${escapeHTML(p.qualite)}${p.probaBasse && p.probaHaute ? ` · ${Math.round(p.probaBasse * 100)}–${Math.round(p.probaHaute * 100)} %` : ''}</span>` : ''}
+            ${p.probaModele != null ? `<span class="pick-value-badge model-badge" title="Probabilité indépendante du modèle quantitatif (${escapeHTML(p.modeleSource || '')}). Sert de garde-fou : un écart trop grand avec l'estimation de l'IA fait écarter le pick.">modèle ${Math.round(p.probaModele * 100)} %</span>` : ''}
             ${typeof p.steam === 'number' && Math.abs(p.steam) >= 1.5 ? `<span class="pick-value-badge ${p.steam > 0 ? 'steam-up' : 'steam-down'}" title="Mouvement de la ligne depuis le dernier relevé">${p.steam > 0 ? '↑ cote qui baisse' : '↓ cote qui monte'} ${p.steam > 0 ? '+' : ''}${p.steam.toFixed(1)} pts</span>` : ''}
             ${coteBadge}
           </div>

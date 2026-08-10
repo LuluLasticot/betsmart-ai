@@ -55,6 +55,7 @@ js/
   poisson.js        Modèle de buts (football)
   clubelo.js        Elo des clubs (football)
   tennis.js         Elo tennis + vitesse des courts
+  anchor.js         Ancrage quantitatif par sport + garde-fou du Radar
   facts.js          Faits réels via api-sports (forme, xG, blessures, compos)
   scores.js         Scores en direct — sans IA (coteur + api-sports)
   coteur.js         Cotes réelles des bookmakers français

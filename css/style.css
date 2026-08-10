@@ -1463,3 +1463,11 @@ kbd {
   .bulk-bar { padding: 8px 10px; gap: 8px; }
   .bulk-count { flex-basis: 100%; margin-right: 0; }
 }
+
+
+/* ---- Ancrage modèle : badge et picks écartés par le garde-fou ---- */
+.pick-value-badge.model-badge { background: var(--surface-2); color: var(--text-dim); }
+.guard-note summary { cursor: pointer; font-size: 13px; }
+.guard-note summary::-webkit-details-marker { color: var(--text-dim); }
+.guard-list { margin: 0; padding-left: 18px; font-size: 13px; }
+.guard-list li { margin-bottom: 8px; line-height: 1.45; }

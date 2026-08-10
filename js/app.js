@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v90';
+  const APP_VERSION = 'v91';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2352,12 +2352,51 @@
       à CLV positive du backtest. On borne l'écart des deux côtés : en dessous
       de 4 % c'est du bruit de marge, au-delà de 25 % c'est presque toujours
       une erreur de saisie ou deux marchés différents comparés à tort. */
-  function priceOutlier(m) {
+  /** Marge apparente d'un marché : somme des probabilités implicites de toutes
+      ses issues. Un bookmaker réel est TOUJOURS au-dessus de 100 % (c'est sa
+      marge). En dessous, la donnée est fausse — cotes prises à des instants
+      différents, ou attribuées au mauvais book. */
+  function marketOverround(marches, marche) {
+    const sibs = (marches || []).filter((x) => String(x.marche || '') === String(marche || '') && Number(x.cote) > 1);
+    if (sibs.length < 2) return null;
+    return sibs.reduce((a, x) => a + 1 / Number(x.cote), 0);
+  }
+
+  /** Détection d'un book en retard sur le marché, avec deux contrôles de
+      cohérence appris d'un faux positif observé : Unibet apparaissait « en
+      retard » sur LES DEUX camps d'un même match MLB (1,72 et 2,50), dont la
+      somme des probabilités faisait 98,1 %. Un book à marge négative n'existe
+      pas : au moins un des deux prix était périmé. Deux issues opposées ne
+      peuvent pas être simultanément meilleures que le marché. */
+  function priceOutlier(m, marches) {
     const price = Number(m.cote), ref = Number(m.cote_marche);
     if (!(price > 1) || !(ref > 1) || m.cote_verifiee === false) return null;
+
+    const over = marketOverround(marches, m.marche);
+    if (over != null && over < 1.005) return null;   // marché incohérent → on se tait
+
+    // Une seule issue par marché peut être en retard : on garde la meilleure.
+    if (marches) {
+      const better = marches.some((x) => {
+        if (x === m || String(x.marche || '') !== String(m.marche || '')) return false;
+        const p = Number(x.cote), r = Number(x.cote_marche);
+        if (!(p > 1) || !(r > 1) || x.cote_verifiee === false) return false;
+        return (p / r - 1) > (price / ref - 1);
+      });
+      if (better) return null;
+    }
+
     const gain = price / ref - 1;
     if (gain < 0.04 || gain > 0.25) return null;
     return { gain, ref, pct: Math.round(gain * 1000) / 10 };
+  }
+
+  /** Avertissement affiché quand les cotes d'un marché sont mutuellement
+      incohérentes — c'est un défaut de données, pas une opportunité. */
+  function marketDataWarning(marches, marche) {
+    const over = marketOverround(marches, marche);
+    if (over == null || over >= 1.005) return null;
+    return `Les cotes de ce marché somment à ${(over * 100).toFixed(1)} % de probabilité, soit une marge négative — impossible chez un bookmaker réel. Au moins un prix est périmé ou mal attribué : ne vous y fiez pas sans vérifier sur le site du book.`;
   }
 
   /** Pourquoi aucun ancrage n'est disponible — dire lequel des deux cas on subit
@@ -2480,14 +2519,14 @@
           <div class="pick-meta">${escapeHTML(r.sport || '')} · ${escapeHTML(r.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
         </div>
         ${(r.marches || []).some((m) => {
-          const po = priceOutlier(m);
+          const po = priceOutlier(m, r.marches);
           if (!po || !lastAnalyzeAnchor) return false;
           try {
             const g = Anchor.check(lastAnalyzeAnchor, r.match || '', m.marche, m.selection, m.probabilite);
             return g.ok && g.modelProb != null && (g.modelProb * Number(m.cote) - 1) >= 0.03;
           } catch (_) { return false; }
         }) ? '<span class="verdict-badge shop">Prix en retard exploitable</span>'
-          : (r.marches || []).some((m) => priceOutlier(m)) ? '<span class="verdict-badge shop-weak">Prix en retard (non confirmé)</span>' : ''}
+          : (r.marches || []).some((m) => priceOutlier(m, r.marches)) ? '<span class="verdict-badge shop-weak">Prix en retard (non confirmé)</span>' : ''}
         <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : r.verdict === 'a_eviter' ? 'À éviter selon l\'analyse' : 'Pas de +EV net'}</span>
       </div>
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
@@ -2542,6 +2581,7 @@
               : `<div class="bet-profit market-val zero"><span class="market-unverified">non vérifiée</span></div>`}
             <div class="avis">
               ${!mGuard.ok ? `<div class="avis-guard">⚠ Écarté par le garde-fou : ${escapeHTML(mGuard.reason || '')}.</div>` : ''}
+              ${(() => { const w = marketDataWarning(r.marches, m.marche); return w ? `<div class="avis-guard">⚠ <strong>Cotes incohérentes :</strong> ${escapeHTML(w)}</div>` : ''; })()}
               ${po ? `<div class="avis-shop">💰 <strong>Prix en retard :</strong> ${escapeHTML(m.bookmaker || 'ce book')} affiche ${Number(m.cote).toFixed(2)} quand le marché est autour de ${po.ref.toFixed(2)} — <strong>+${po.pct} %</strong> de prix.${
                 modelEdge == null ? ' Aucun modèle ne couvre cette issue : à confirmer vous-même avant de miser.'
                 : modelEdge >= 0.03 ? ` Le modèle valide l'issue (${Math.round(mGuard.modelProb * 100)} %), ce qui donne <strong>${(modelEdge * 100).toFixed(1)} %</strong> d'avantage à ce prix.`

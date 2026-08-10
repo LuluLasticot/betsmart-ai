@@ -309,8 +309,23 @@ const Anchor = (() => {
 
     const parts = splitMatch(matchLabel) || {};
     const t = anchor.teams || {};
-    const sh = affinity(selection, [parts.home, ...(t.home || [])]);
-    const sa = affinity(selection, [parts.away, ...(t.away || [])]);
+
+    // Codes 1N2 nus. Coteur libelle parfois la sélection « 1 » / « N » / « 2 »
+    // en mettant le nom de l'équipe dans le nom du marché : aucun rapprochement
+    // par nom n'était alors possible et seul le nul obtenait un ancrage.
+    if (sel === '1') return anchor.prob.home;
+    if (sel === '2') return anchor.prob.away;
+
+    let sh = affinity(selection, [parts.home, ...(t.home || [])]);
+    let sa = affinity(selection, [parts.away, ...(t.away || [])]);
+
+    // Repli : le nom de l'équipe est dans le libellé du marché
+    // (« 1N2 - Victoire Kairat Almaty »).
+    if (sh < 0.5 && sa < 0.5) {
+      const lbl = String(marche || '').replace(/^[^-–—]*[-–—]\s*/, '');
+      sh = affinity(lbl, [parts.home, ...(t.home || [])]);
+      sa = affinity(lbl, [parts.away, ...(t.away || [])]);
+    }
     if (sh >= 0.5 && sh > sa) return anchor.prob.home;
     if (sa >= 0.5 && sa > sh) return anchor.prob.away;
     return null;

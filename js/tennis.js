@@ -57,7 +57,15 @@ const TennisElo = (() => {
   }
   const surfRating = (r, surf) => 0.6 * (surf === 'g' ? r.g : surf === 'c' ? r.c : r.h) + 0.4 * r.e;
 
-  const rankLabel = (r) => (r && r.r ? '#' + r.r + ' ' + (r.t === 'wta' ? 'WTA' : 'ATP') : (r && r.t === 'wta' ? 'WTA' : 'ATP'));
+  /** ATTENTION : `r` est le rang DANS LA TABLE ELO, pas le classement officiel
+      ATP/WTA. Les deux divergent beaucoup pour un joueur en pleine progression
+      (l'Elo réagit vite aux victoires, le classement officiel est un cumul sur
+      52 semaines). L'afficher comme un classement ATP était factuellement faux
+      et induisait l'IA en erreur. */
+  const rankLabel = (r) => {
+    const circuit = (r && r.t === 'wta') ? 'WTA' : 'ATP';
+    return (r && r.r) ? `${r.r}e à l'Elo ${circuit}` : circuit;
+  };
 
   /* ---- Vitesse de court (Tennis Abstract) : donnée réelle, pas une impression ---- */
   let speedTable = null;

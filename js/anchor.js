@@ -36,22 +36,67 @@ const Anchor = (() => {
     return tables[name];
   }
 
-  /** Résout un nom d'équipe vers une entrée de table (exact → alias → inclusion). */
+  // Marqueurs d'équipe féminine. Sans ce garde-fou, « Atlanta Dream W » (WNBA)
+  // était résolu vers les « Atlanta Hawks » (NBA) parce que l'alias « atlanta »
+  // suffisait : un faux appariement produit un modèle totalement faux, ce qui
+  // est bien pire que pas de modèle du tout.
+  const FEM = /(^|\s)(w|f|fem|femmes?|dames?|women|wnba)(\s|$)/;
+
+  /** Proximité par jetons entre deux libellés, tolérante aux abréviations de ville.
+      La normalisation se fait sur le plus COURT des deux libellés, ce qui permet
+      à « Lakers » de retrouver « Los Angeles Lakers ». Contrepartie : un libellé
+      d'un seul mot obtiendrait un score parfait dès qu'un mot correspond —
+      l'alias « reds » gagnait ainsi contre « BOS Red Sox ». On exige donc au
+      moins deux jetons de part et d'autre pour la recherche floue ; les libellés
+      d'un mot restent gérés par la correspondance exacte, en amont. */
+  function nameScore(a, b) {
+    const wa = norm(a).split(' ').filter(Boolean);
+    const wb = norm(b).split(' ').filter(Boolean);
+    if (wa.length < 2 || wb.length < 2) return 0;
+    let hits = 0;
+    for (const w of wa) {
+      if (wb.some((v) => v === w || (w.length >= 3 && v.startsWith(w)) || (v.length >= 3 && w.startsWith(v)))) hits++;
+    }
+    return hits / Math.min(wa.length, wb.length);
+  }
+
+  /**
+   * Résout un nom d'équipe vers une entrée de table.
+   * Deux exigences, apprises d'un faux positif : le meilleur candidat doit
+   * dépasser un seuil de proximité ET devancer nettement le deuxième, sinon
+   * l'appariement est ambigu et on préfère ne rien renvoyer.
+   */
   function lookup(name, t) {
     if (!t || !t.teams) return null;
     const n = norm(name);
     if (!n) return null;
+
+    // Une équipe féminine ne doit jamais tomber sur une table masculine, et
+    // réciproquement : le nom de ville est souvent identique.
+    const wantFem = FEM.test(' ' + n + ' ');
+    const tableFem = /w/i.test(String(t.league || '')) && /wnba|femin/i.test(String(t.league || ''));
+    if (wantFem !== tableFem) return null;
+
     if (t.teams[n]) return { key: n, ...t.teams[n] };
     const ali = t.aliases && t.aliases[n];
     if (ali && t.teams[ali]) return { key: ali, ...t.teams[ali] };
-    // Inclusion : « Milwaukee Brewers (MLB) » → « milwaukee brewers »
-    for (const k of Object.keys(t.teams)) {
-      if (n === k || n.includes(k) || k.includes(n)) return { key: k, ...t.teams[k] };
-    }
-    for (const [a, k] of Object.entries(t.aliases || {})) {
-      if (n === a || n.includes(a)) return t.teams[k] ? { key: k, ...t.teams[k] } : null;
-    }
-    return null;
+
+    // Recherche floue : on note tous les candidats et on n'accepte qu'un
+    // gagnant net (aliases inclus, ramenés à leur équipe canonique).
+    const scores = new Map();
+    const note = (label, key) => {
+      const sc = nameScore(n, label);
+      if (sc > (scores.get(key) || 0)) scores.set(key, sc);
+    };
+    for (const k of Object.keys(t.teams)) note(k, k);
+    for (const [a, k] of Object.entries(t.aliases || {})) if (t.teams[k]) note(a, k);
+
+    const ranked = [...scores.entries()].sort((x, y) => y[1] - x[1]);
+    if (!ranked.length) return null;
+    const [bestKey, bestScore] = ranked[0];
+    const second = ranked[1] ? ranked[1][1] : 0;
+    if (bestScore < 0.6 || (bestScore - second) < 0.15) return null;
+    return { key: bestKey, ...t.teams[bestKey] };
   }
 
   /* ---- Loi normale centrée réduite (probabilité de couvrir une marge) ---- */
@@ -72,14 +117,21 @@ const Anchor = (() => {
      directement en probabilité via une loi normale (σ ≈ 11,5 points en NBA).
      ====================================================================== */
   async function basketball({ home, away }) {
-    const t = await table('basket-ratings');
-    const H = lookup(home, t), A = lookup(away, t);
-    if (!H || !A) return null;
+    // Plusieurs ligues, une table chacune : les efficacités ne sont pas
+    // comparables d'une ligue à l'autre (rythme et niveau différents), donc
+    // on cherche la table où LES DEUX équipes existent.
+    let t = null, H = null, A = null;
+    for (const name of ['basket-ratings', 'wnba-ratings']) {
+      const cand = await table(name);
+      const h = lookup(home, cand), a = lookup(away, cand);
+      if (h && a) { t = cand; H = h; A = a; break; }
+    }
+    if (!t) return null;
     const hca = t.hca ?? 2.5, sigma = t.sigma ?? 11.5;
     const margin = (H.mov - A.mov) + hca;
     const pHome = normCdf(margin / sigma);
     return {
-      sport: 'basketball', source: `Basketball-Reference ${t.season}`, updated: t.updated,
+      sport: 'basketball', source: `Basketball-Reference ${t.league || 'NBA'} ${t.season}`, updated: t.updated,
       teams: { home: [home, H.key], away: [away, A.key] },
       prob: { home: pHome, draw: null, away: 1 - pHome },
       margin: Math.round(margin * 10) / 10,
@@ -133,15 +185,37 @@ const Anchor = (() => {
      FOOTBALL — Elo des clubs (déjà chargé par js/clubelo.js)
      ====================================================================== */
   async function football({ home, away }) {
-    if (typeof ClubElo === 'undefined') return null;
+    // Club Elo ne couvre que l'Europe (589 clubs). Pour l'Amérique du Sud,
+    // la MLS ou l'Asie, on retombe sur une table d'Elo calculée localement.
+    if (typeof ClubElo === 'undefined') return footballExtra({ home, away });
     let f = null;
-    try { f = await ClubElo.matchFacts({ home, away }); } catch (_) { return null; }
-    if (!f || !f.clubElo) return null;
+    try { f = await ClubElo.matchFacts({ home, away }); } catch (_) { f = null; }
+    if (!f || !f.clubElo) return footballExtra({ home, away });
     return {
       sport: 'football', source: 'Club Elo', updated: f.updated,
       teams: { home: [home, f.home.name], away: [away, f.away.name] },
       prob: { home: f.p1 / 100, draw: f.pX / 100, away: f.p2 / 100 },
       blind: `Elo des clubs — ${f.home.name} ${f.home.elo}${f.home.level ? ` (D${f.home.level} ${f.home.country})` : ''} vs ${f.away.name} ${f.away.elo}${f.away.level ? ` (D${f.away.level} ${f.away.country})` : ''}. L'Elo intègre le niveau des adversaires rencontrés, pas seulement les résultats.`
+    };
+  }
+
+  /** Championnats hors Europe : Elo calculé à partir des résultats historiques
+      de football-data.co.uk (Argentine, Brésil, MLS, Mexique, Japon…). */
+  async function footballExtra({ home, away }) {
+    const t = await table('football-elo-extra');
+    const H = lookup(home, t), A = lookup(away, t);
+    if (!H || !A) return null;
+    const hfa = t.hfa ?? 60;
+    const diff = (H.elo + hfa) - A.elo;
+    const pNoDraw = 1 / (1 + Math.pow(10, -diff / 400));
+    const pDraw = Math.max(0.06, 0.29 - Math.abs(diff) / 1600);
+    const rest = 1 - pDraw;
+    return {
+      sport: 'football', source: `Elo ${t.source_short || 'football-data'} (${H.league || 'hors Europe'})`, updated: t.updated,
+      teams: { home: [home, H.key], away: [away, A.key] },
+      prob: { home: pNoDraw * rest, draw: pDraw, away: rest - pNoDraw * rest },
+      quality: 'low',   // moins de matchs et sources moins riches qu'en Europe
+      blind: `Elo local (${H.league || 'championnat hors Europe'}) — ${home} ${Math.round(H.elo)} vs ${away} ${Math.round(A.elo)}, calculé sur les résultats de la saison. Moins fiable que l'Elo européen : échantillon plus court.`
     };
   }
 

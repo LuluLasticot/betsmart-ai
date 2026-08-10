@@ -1,6 +1,6 @@
 /* BetSmart AI — Service Worker
    Stratégie : cache-first pour le shell, network-first pour les CDN. */
-const CACHE = 'betsmart-v87';
+const CACHE = 'betsmart-v89';
 const SHELL = [
   './',
   './index.html',
@@ -25,6 +25,8 @@ const SHELL = [
   './data/tennis-elo.json',
   './data/basket-ratings.json',
   './data/mlb-ratings.json',
+  './data/wnba-ratings.json',
+  './data/football-elo-extra.json',
   './data/court-speed.json',
   './data/club-elo.json',
   './js/advisor.js',
@@ -39,7 +41,15 @@ const SHELL = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // addAll() échoue EN BLOC dès qu'une seule ressource renvoie 404 : une table
+  // de données pas encore générée casserait alors toute l'installation du
+  // service worker, donc l'app hors ligne. On met donc en cache une ressource
+  // à la fois, en tolérant les absences.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => Promise.all(SHELL.map((url) => c.add(url).catch(() => null))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {

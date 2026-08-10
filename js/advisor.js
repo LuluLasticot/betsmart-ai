@@ -261,7 +261,7 @@ Termine par un unique bloc \`\`\`json :
   "verdict": "a_jouer" | "a_eviter",
   "resume": "3-4 phrases : lecture globale du match, information clé.",
   "marches": [
-    {"marche": "1N2", "selection": "…", "cote": 1.85, "cote_verifiee": true, "bookmaker": "…", "probabilite": 0.55, "value_pct": 1.8, "jouable": false, "avis": "1 phrase"}
+    {"marche": "1N2", "selection": "…", "cote": 1.85, "cote_verifiee": true, "bookmaker": "…", "cote_marche": 1.80, "probabilite": 0.55, "value_pct": 1.8, "jouable": false, "avis": "1 phrase"}
   ],
   "meilleur_marche": "libellé du marché retenu ou null",
   "risques": "1-2 phrases.",
@@ -270,9 +270,13 @@ Termine par un unique bloc \`\`\`json :
 \`\`\`
 Ne force JAMAIS un verdict "a_jouer" : la plupart des matchs ne présentent aucune value exploitable.
 
+# PRIX DE MARCHÉ — "cote_marche"
+Pour chaque marché, indique en plus la cote CONSENSUS que tu observes chez la majorité des books (pas la meilleure, la plus courante). Si tu ne la trouves pas de source récente, mets null plutôt que d'estimer.
+Cette valeur ne sert PAS à calculer la value : le système la compare au prix réellement disponible pour repérer un book en retard sur le marché. Un écart net entre les deux est l'information la plus exploitable qui existe, bien davantage qu'une prédiction.
+
 # COHÉRENCE — RÈGLE IMPÉRATIVE
-"jouable" doit refléter ta VRAIE conclusion sur ce marché, indépendamment du calcul de value. Si tu estimes que la cote intègre déjà l'information, que ton avantage est dans la marge d'erreur, ou que le marché est correctement pricé, mets "jouable": false — MÊME si value_pct ressort positif. Un value_pct légèrement positif issu d'une probabilité que tu as toi-même qualifiée d'incertaine n'est pas un pari, c'est du bruit.
-Ne mets JAMAIS "jouable": true sur un marché dont tu écris dans "avis" qu'il n'offre pas de marge exploitable : ce serait te contredire.`;
+"jouable" doit refléter ta VRAIE conclusion sur ce marché. Sa seule fonction est d'empêcher une contradiction entre ton texte et le chiffre : ne mets JAMAIS "jouable": true sur un marché dont tu écris dans "avis" qu'il n'offre aucune marge, et inversement ne mets pas "jouable": false sur un marché que tu décris comme intéressant.
+Mets "jouable": false quand l'information te manque ou que tes éléments se contredisent. Ne le mets PAS simplement parce que l'avantage semble faible ou que le marché est efficient : c'est le système qui tranche ensuite, avec le modèle quantitatif et l'historique mesuré.`;
   }
 
   /* ------------------------------------------------------------------
@@ -401,7 +405,9 @@ Profil ${ctx.riskProfile} · Performance passée : ${ctx.userPerf}
 \`\`\`
 "option_id" DOIT être l'un des id fournis. Deux sources minimum par pick. Ne mentionne aucune cote.
 
-"verdict" vaut "jouer" ou "passer" et exprime ta conviction RÉELLE, indépendamment de tout calcul : mets "passer" dès que ton estimation repose sur une information que le marché connaît forcément aussi, ou que ta fourchette est trop large pour trancher. Un pick marqué "passer" ne sera pas proposé, quelle que soit la value calculée ensuite — c'est le mécanisme qui te permet de signaler « j'ai analysé, mais il n'y a rien à jouer ici ».`;
+"verdict" vaut "jouer" ou "passer" et exprime ta conviction RÉELLE. Son seul rôle est d'éviter que tu recommandes un pari que ton propre texte déconseille — pas de te faire refuser par principe.
+Mets "passer" uniquement dans ces cas précis : ta fourchette de probabilité est si large que tu ne sais pas trancher ; les faits que tu as trouvés se contredisent ; ou une information déterminante te manque (composition, partant, forfait non confirmé).
+Mets "jouer" dès que ton dossier tient debout, MÊME si l'avantage te paraît modeste et MÊME si le marché connaît les mêmes faits que toi : ce n'est pas à toi d'arbitrer si l'écart est suffisant, le système le fait ensuite avec le modèle quantitatif et l'historique de performance. Refuser systématiquement n'est pas de la rigueur : sans picks, rien ne peut être mesuré ni amélioré.`;
   }
 
   async function suggestFromCoteurMarkets(apiKey, model, ctx, candidates, onProgress) {

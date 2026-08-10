@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v87';
+  const APP_VERSION = 'v89';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2337,6 +2337,34 @@
   }
 
   /** Encart « Données réelles » (API-Football) affiché dans l'analyse d'un match. */
+
+
+  /** Détection d'un book en retard sur le marché.
+      Comparer le prix disponible au consensus observé est le signal le plus
+      fiable dont on dispose : il ne demande aucune prédiction, seulement de
+      constater qu'un book n'a pas encore bougé. C'est aussi le seul segment
+      à CLV positive du backtest. On borne l'écart des deux côtés : en dessous
+      de 4 % c'est du bruit de marge, au-delà de 25 % c'est presque toujours
+      une erreur de saisie ou deux marchés différents comparés à tort. */
+  function priceOutlier(m) {
+    const price = Number(m.cote), ref = Number(m.cote_marche);
+    if (!(price > 1) || !(ref > 1) || m.cote_verifiee === false) return null;
+    const gain = price / ref - 1;
+    if (gain < 0.04 || gain > 0.25) return null;
+    return { gain, ref, pct: Math.round(gain * 1000) / 10 };
+  }
+
+  /** Pourquoi aucun ancrage n'est disponible — dire lequel des deux cas on subit
+      évite de laisser croire à une panne alors que c'est une limite de couverture. */
+  function anchorGapReason(sport) {
+    const s = String(sport || '').toLowerCase();
+    if (/foot|soccer/.test(s)) return 'la table Club Elo ne couvre que les clubs européens (589 clubs, 55 pays) — Amérique du Sud, MLS et Asie en sont absents.';
+    if (/basket/.test(s)) return 'la table de ratings ne couvre que la NBA — WNBA, EuroLigue et championnats nationaux en sont absents.';
+    if (/tennis/.test(s)) return 'un des deux joueurs est hors de la base Elo (top ~230 ATP/WTA).';
+    if (/base ?ball/.test(s)) return 'les équipes ne sont pas identifiées dans la table MLB, ou les lanceurs partants ne sont pas encore annoncés.';
+    return 'ce sport n\'a pas encore de modèle quantitatif de référence.';
+  }
+
   let lastAnalyzeAnchor = null;   // ancrage du dernier match analysé (garde-fou d'affichage)
 
   function matchFactsHTML(facts) {
@@ -2439,6 +2467,7 @@
           <h3>${escapeHTML(r.match)}</h3>
           <div class="pick-meta">${escapeHTML(r.sport || '')} · ${escapeHTML(r.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
         </div>
+        ${(r.marches || []).some((m) => priceOutlier(m)) ? '<span class="verdict-badge shop">Prix en retard détecté</span>' : ''}
         <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : r.verdict === 'a_eviter' ? 'À éviter selon l\'analyse' : 'Pas de +EV net'}</span>
       </div>
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
@@ -2452,6 +2481,10 @@
         </select>
         <span class="stake-profile-hint">${mode === 'flat' ? 'mode mise à plat' : 'les mises s\'ajustent au profil'}</span>
       </div>
+      ${!lastAnalyzeAnchor ? `<div class="market-note" style="border-left-color:var(--amber)">
+        <strong>Aucun ancrage quantitatif pour ce match.</strong> Le garde-fou du modèle n'a pas pu s'appliquer :
+        ${escapeHTML(anchorGapReason(r.sport))} Les probabilités ci-dessous reposent uniquement sur l'analyse de l'IA, sans contre-expertise chiffrée — soyez plus exigeant que d'habitude.
+      </div>` : ''}
       <div class="markets-table">
         ${(r.marches || []).map((m, i) => {
           const verified = m.cote_verifiee !== false;   // cote confrontée à un vrai book FR
@@ -2480,6 +2513,7 @@
               : `<div class="bet-profit market-val zero"><span class="market-unverified">non vérifiée</span></div>`}
             <div class="avis">
               ${!mGuard.ok ? `<div class="avis-guard">⚠ Écarté par le garde-fou : ${escapeHTML(mGuard.reason || '')}.</div>` : ''}
+              ${(() => { const po = priceOutlier(m); return po ? `<div class="avis-shop">💰 <strong>Prix en retard :</strong> ${escapeHTML(m.bookmaker || 'ce book')} affiche ${Number(m.cote).toFixed(2)} alors que le marché est autour de ${po.ref.toFixed(2)} — soit <strong>+${po.pct} %</strong> de prix. C'est le signal le plus exploitable qui existe, indépendamment de toute prédiction. À vérifier avant de miser : le consensus est celui rapporté par l'analyse, pas une mesure.</div>` : ''; })()}
               ${(mGuard.ok && aiSaysNo && m.value_pct >= 0) ? `<div class="avis-guard">⚠ Value calculée positive, mais l'analyse conclut de ne pas jouer — c'est sa conclusion qui prime.</div>` : ''}
               <div class="avis-text">${escapeHTML(m.avis || '')}</div>
               <div class="mycote-row">

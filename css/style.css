@@ -411,7 +411,7 @@ body {
    ========================================================================== */
 .bet-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 88px 76px 76px 96px 74px;
+  grid-template-columns: 30px minmax(0, 1fr) 88px 76px 76px 96px 74px;
   align-items: center;
   gap: 12px;
   padding: 13px 6px;
@@ -453,7 +453,7 @@ body {
 
 .col-headers {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 88px 76px 76px 96px 74px;
+  grid-template-columns: 30px minmax(0, 1fr) 88px 76px 76px 96px 74px;
   gap: 12px;
   padding: 0 6px 10px;
   border-bottom: 1px solid var(--border);
@@ -1365,7 +1365,7 @@ kbd {
   .fab-mobile svg { width: 20px; height: 20px; }
   .fab-mobile:active { transform: scale(0.94); }
 
-  .bet-row, .col-headers { grid-template-columns: minmax(0, 1fr) 76px 90px; }
+  .bet-row, .col-headers { grid-template-columns: 28px minmax(0, 1fr) 76px 90px; }
   .bet-row .hide-m, .col-headers .hide-m { display: none; }
   .bet-actions .btn-icon { opacity: 1; }
 
@@ -1434,3 +1434,32 @@ kbd {
 .clv-grid, .col-headers.clv-grid { grid-template-columns: minmax(0,1fr) 72px 78px 84px 72px 92px; }
 .clv-followed { font-size: 10.5px; font-weight: 600; color: var(--accent); margin-left: 6px; }
 @media (max-width: 720px) { .clv-grid, .col-headers.clv-grid { grid-template-columns: minmax(0,1fr) 78px 88px; } }
+
+
+/* ---- Édition groupée : cases de sélection + barre d'actions ---- */
+.bet-pick { display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.bet-pick input,
+.col-headers .ch-pick input {
+  width: 16px; height: 16px; margin: 0; cursor: pointer;
+  accent-color: var(--accent, #4f8cff);
+}
+.col-headers .ch-pick { display: flex; align-items: center; justify-content: center; }
+.bet-row.selected { background: color-mix(in srgb, var(--accent, #4f8cff) 10%, transparent); }
+
+.bulk-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 10px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--accent, #4f8cff) 12%, var(--surface-2, #16181d));
+  border: 1px solid color-mix(in srgb, var(--accent, #4f8cff) 30%, transparent);
+  position: sticky; top: 0; z-index: 5;
+}
+.bulk-bar[hidden] { display: none; }
+.bulk-count { font-weight: 600; font-size: 14px; margin-right: auto; }
+.bulk-bar button { padding: 6px 12px; font-size: 13px; }
+#bulkDelete { color: var(--red, #ff5f6d); }
+.bulk-hint { margin: 0 0 14px; }
+
+@media (max-width: 640px) {
+  .bulk-bar { padding: 8px 10px; gap: 8px; }
+  .bulk-count { flex-basis: 100%; margin-right: 0; }
+}

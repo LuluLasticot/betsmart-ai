@@ -211,6 +211,12 @@
         </div>
 
         <div class="panel">
+          <div class="bulk-bar" id="bulkBar" hidden>
+            <span class="bulk-count" id="bulkCount">0 sélectionné</span>
+            <button class="btn-secondary" id="bulkEdit">Modifier en lot</button>
+            <button class="btn-ghost" id="bulkDelete">Supprimer</button>
+            <button class="btn-ghost" id="bulkClear">Annuler</button>
+          </div>
           <div id="betsList"></div>
         </div>
       </section>
@@ -605,6 +611,11 @@
             </datalist>
           </div>
           <div class="field">
+            <label for="fCountry">Pays / région <span class="opt">optionnel</span></label>
+            <input type="text" id="fCountry" class="input" list="countryList" placeholder="Angleterre, Ukraine, Europe…" autocomplete="off">
+            <datalist id="countryList"></datalist>
+          </div>
+          <div class="field">
             <label for="fCompetition">Compétition <span class="opt">optionnel</span></label>
             <input type="text" id="fCompetition" class="input" list="competitionList" placeholder="Ligue 1" autocomplete="off">
             <datalist id="competitionList"></datalist>
@@ -779,6 +790,43 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+
+  <!-- ===== Modal : édition en lot ===== -->
+  <div class="modal-backdrop" id="bulkModal" hidden>
+    <div class="modal modal-sm" role="dialog" aria-modal="true" aria-labelledby="bulkTitle">
+      <div class="modal-head">
+        <h2 id="bulkTitle">Modifier les paris sélectionnés</h2>
+        <button class="btn-icon" data-close-bulk aria-label="Fermer">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <form id="bulkForm">
+        <p class="field-hint bulk-hint">Seuls les champs remplis sont appliqués. Laissez vide pour ne rien changer.</p>
+        <div class="field">
+          <label for="bulkSport">Sport</label>
+          <input type="text" id="bulkSport" class="input" list="sportList" placeholder="inchangé" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="bulkCompetition">Compétition</label>
+          <input type="text" id="bulkCompetition" class="input" list="competitionList" placeholder="inchangé" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="bulkCountry">Pays / région</label>
+          <input type="text" id="bulkCountry" class="input" list="countryList" placeholder="inchangé" autocomplete="off">
+          <p class="field-hint">Sépare les compétitions homonymes (Premier League anglaise vs ukrainienne) et fixe le drapeau dans l'Analyse.</p>
+        </div>
+        <div class="field">
+          <label for="bulkBookmaker">Bookmaker</label>
+          <input type="text" id="bulkBookmaker" class="input" list="bookmakerList" placeholder="inchangé" autocomplete="off">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn-secondary" data-close-bulk>Annuler</button>
+          <button type="submit" class="btn-primary" id="bulkApply">Appliquer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="js/db.js"></script>
   <script src="js/firebase-config.js"></script>
   <script src="js/cloud.js"></script>

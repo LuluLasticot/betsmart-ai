@@ -180,6 +180,25 @@ const DB = (() => {
     return data.bets.length;
   }
 
+  /** Édition groupée : applique le même correctif à plusieurs paris.
+      Les champs vides du patch sont ignorés (on ne veut pas écraser par du vide).
+      Renvoie le nombre de paris réellement modifiés. */
+  async function bulkUpdateBets(ids, patch) {
+    const clean = Object.fromEntries(
+      Object.entries(patch || {}).filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+    );
+    if (!ids || !ids.length || !Object.keys(clean).length) return 0;
+    const all = await getBets();
+    const set = new Set(ids.map(String));
+    let n = 0;
+    for (const bet of all) {
+      if (!set.has(String(bet.id))) continue;
+      await saveBet({ ...bet, ...clean });
+      n++;
+    }
+    return n;
+  }
+
   /** Réglages propres à l'appareil (clés d'API, préférences d'affichage) :
       conservés lors d'un changement de compte, contrairement aux données de jeu. */
   const DEVICE_SETTINGS = ['apiKey', 'apiFootballKey', 'oddsApiKey', 'githubToken', 'model', 'notifyAlerts'];
@@ -214,6 +233,6 @@ const DB = (() => {
     getTransactions, saveTransaction, deleteTransaction,
     getPicks, savePick, deletePick,
     getSetting, setSetting, getAllSettings,
-    exportAll, importAll, wipe, clearAccountData, hooks
+    exportAll, importAll, wipe, clearAccountData, bulkUpdateBets, hooks
   };
 })();

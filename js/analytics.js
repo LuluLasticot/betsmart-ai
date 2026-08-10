@@ -113,6 +113,39 @@ const Analytics = (() => {
     // Cyclisme
     [/tour de france/, 'fr', 'France']
   ];
+  /** Pays saisi explicitement (texte libre) → drapeau. Prioritaire sur la devinette
+      par nom de compétition : « Premier League » existe en Angleterre ET en Ukraine. */
+  const COUNTRY_FLAG = {
+    france: 'fr', angleterre: 'gb', 'grande bretagne': 'gb', 'royaume uni': 'gb', ecosse: 'gb',
+    'pays de galles': 'gb', irlande: 'ie', espagne: 'es', italie: 'it', allemagne: 'de',
+    'pays bas': 'nl', hollande: 'nl', portugal: 'pt', belgique: 'be', turquie: 'tr',
+    suede: 'se', norvege: 'no', danemark: 'dk', finlande: 'fi', islande: 'is',
+    ukraine: 'ua', russie: 'ru', pologne: 'pl', grece: 'gr', croatie: 'hr', serbie: 'rs',
+    suisse: 'ch', autriche: 'at', roumanie: 'ro', bulgarie: 'bg', hongrie: 'hu',
+    tchequie: 'cz', 'republique tcheque': 'cz', slovaquie: 'sk', slovenie: 'si',
+    'coree du sud': 'kr', coree: 'kr', japon: 'jp', chine: 'cn', inde: 'in',
+    'etats unis': 'us', usa: 'us', canada: 'ca', mexique: 'mx', bresil: 'br',
+    argentine: 'ar', chili: 'cl', colombie: 'co', equateur: 'ec', perou: 'pe',
+    uruguay: 'uy', australie: 'au', 'nouvelle zelande': 'nz', maroc: 'ma', tunisie: 'tn',
+    algerie: 'dz', egypte: 'eg', 'afrique du sud': 'za', israel: 'il', chypre: 'cy',
+    europe: 'eu', international: 'world', monde: 'world'
+  };
+  const FLAG_EXTRA = {
+    ua: '🇺🇦', ru: '🇷🇺', ie: '🇮🇪', cn: '🇨🇳', in: '🇮🇳', cl: '🇨🇱', co: '🇨🇴', pe: '🇵🇪',
+    uy: '🇺🇾', nz: '🇳🇿', ma: '🇲🇦', tn: '🇹🇳', dz: '🇩🇿', eg: '🇪🇬', za: '🇿🇦', il: '🇮🇱',
+    cy: '🇨🇾', rs: '🇷🇸', bg: '🇧🇬', hu: '🇭🇺', cz: '🇨🇿', sk: '🇸🇰', si: '🇸🇮'
+  };
+
+  /** Drapeau + libellé à partir d'un pays saisi à la main. */
+  function countryMeta(country) {
+    const n = String(country || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!n) return null;
+    const code = COUNTRY_FLAG[n];
+    if (!code) return { flag: '', region: String(country).trim() };
+    return { flag: FLAG[code] || FLAG_EXTRA[code] || '', region: String(country).trim() };
+  }
+
   function compMeta(name) {
     const n = String(name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     for (const [re, cc, region] of COMP_META) if (re.test(n)) return { flag: FLAG[cc] || '', region };
@@ -137,12 +170,23 @@ const Analytics = (() => {
     for (const b of bets) {
       const canon = canonComp(b.competition);
       const sport = (b.sport || '—').toString().trim() || '—';
-      const key = sport.toLowerCase() + '||' + canon.toLowerCase();
+      // Pays effectif : celui saisi, sinon celui deviné d'après le nom (les anciens
+      // paris sans pays rejoignent ainsi le bon groupe au lieu d'en créer un doublon).
+      const country = ((b.country || '').trim() || compMeta(canon).region || '').toLowerCase();
+      const key = sport.toLowerCase() + '||' + canon.toLowerCase() + '||' + country;
       if (!map.has(key)) map.set(key, { name: canon, sport, set: [] });
       map.get(key).set.push(b);
     }
     return [...map.values()]
-      .map((o) => ({ name: o.name, sport: o.sport, ...compMeta(o.name), ...block(o.set) }))
+      .map((o) => {
+        // Pays renseigné sur les paris (majoritaire) → prioritaire sur la devinette
+        const votes = {};
+        for (const b of o.set) { const c = (b.country || '').trim(); if (c) votes[c] = (votes[c] || 0) + 1; }
+        const top = Object.entries(votes).sort((a, b) => b[1] - a[1])[0];
+        const meta = (top && countryMeta(top[0])) || compMeta(o.name);
+        if (meta && !meta.flag) { const g = compMeta(o.name); if (g.region && g.region.toLowerCase() === meta.region.toLowerCase()) meta.flag = g.flag; }
+        return { name: o.name, sport: o.sport, ...meta, ...block(o.set) };
+      })
       .sort((a, b) => b.count - a.count);
   }
 
@@ -329,5 +373,5 @@ const Analytics = (() => {
 
   const round1 = (n) => Math.round(n * 10) / 10;
 
-  return { compute, reviewSummary, block, canonComp, compMeta, sportIcon };
+  return { compute, reviewSummary, block, canonComp, compMeta, countryMeta, sportIcon };
 })();

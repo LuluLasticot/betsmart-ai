@@ -23,10 +23,11 @@
     charts: {},
     scanQueue: [],
     betsPage: 1,
+    selected: new Set(),      // ids des paris cochés (édition groupée)
     geminiModels: null
   };
 
-  const APP_VERSION = 'v83';
+  const APP_VERSION = 'v84';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -118,6 +119,7 @@
     bindModal();
     bindTxModal();
     bindFilters();
+    bindBulk();
     restoreFilters();
     bindSettings();
     bindCoach();
@@ -622,9 +624,11 @@
   const FILTER_IDS = ['filterStatus', 'filterSport', 'filterCompetition', 'filterBookmaker', 'filterType', 'filterTipster'];
 
   function bindFilters() {
+    // Changer de filtre remet la sélection à zéro : on n'édite jamais en lot
+    // des paris qu'on ne voit plus à l'écran.
     FILTER_IDS.forEach((id) =>
-      $(`#${id}`).addEventListener('change', () => { state.betsPage = 1; persistFilters(); renderBets(); }));
-    $('#filterSearch').addEventListener('input', debounce(() => { state.betsPage = 1; renderBets(); }, 180));
+      $(`#${id}`).addEventListener('change', () => { state.betsPage = 1; state.selected.clear(); persistFilters(); renderBets(); }));
+    $('#filterSearch').addEventListener('input', debounce(() => { state.betsPage = 1; state.selected.clear(); renderBets(); }, 180));
   }
 
   function persistFilters() {
@@ -643,11 +647,23 @@
 
   function refreshFilterOptions() {
     fillOptions('#filterSport', 'Sport · tous', [...new Set(state.bets.map((b) => b.sport).filter(Boolean))].sort());
-    // Compétitions canoniques (dé-doublonnées), en respectant le filtre sport actif
+    // Compétitions canoniques (dé-doublonnées) + pays, en respectant le filtre sport actif.
+    // Le pays fait partie de la clé : deux « Premier League » (Angleterre / Ukraine)
+    // restent deux entrées distinctes dans le filtre.
     const compSport = $('#filterSport') ? $('#filterSport').value : '';
-    const comps = [...new Set(state.bets
-      .filter((b) => b.competition && (!compSport || b.sport === compSport))
-      .map((b) => Analytics.canonComp(b.competition)))].sort((a, b) => a.localeCompare(b));
+    const seenComp = new Map();
+    for (const b of state.bets) {
+      if (!b.competition || (compSport && b.sport !== compSport)) continue;
+      const key = betCompKey(b);
+      if (seenComp.has(key)) continue;
+      const canon = Analytics.canonComp(b.competition);
+      const meta = (b.country || '').trim()
+        ? Analytics.countryMeta(b.country)
+        : Analytics.compMeta(canon);
+      const suffix = meta && meta.region ? ` · ${meta.flag ? meta.flag + ' ' : ''}${meta.region}` : '';
+      seenComp.set(key, { value: key, label: canon + suffix });
+    }
+    const comps = [...seenComp.values()].sort((a, b) => a.label.localeCompare(b.label));
     fillOptions('#filterCompetition', 'Compétition · toutes', comps);
     fillOptions('#filterBookmaker', 'Bookmaker · tous', [...new Set(state.bets.map((b) => b.bookmaker).filter(Boolean))].sort());
     const tipsters = [...new Set(state.bets.map((b) => b.tipster).filter(Boolean))].sort();
@@ -656,11 +672,22 @@
     $('#tipsterList').innerHTML = tipsters.map((t) => `<option>${escapeHTML(t)}</option>`).join('');
   }
 
+  /** Remplit un <select>. Accepte des chaînes ou des objets { value, label }. */
   function fillOptions(sel, placeholder, values) {
     const el = $(sel);
     const current = el.value;
-    el.innerHTML = `<option value="">${placeholder}</option>` + values.map((v) => `<option value="${escapeHTML(v)}">${escapeHTML(v)}</option>`).join('');
-    if (values.includes(current)) el.value = current;
+    const norm = values.map((v) => (typeof v === 'string' ? { value: v, label: v } : v));
+    el.innerHTML = `<option value="">${placeholder}</option>`
+      + norm.map((v) => `<option value="${escapeHTML(v.value)}">${escapeHTML(v.label)}</option>`).join('');
+    if (norm.some((v) => v.value === current)) el.value = current;
+  }
+
+  /** Identité d'une compétition pour les filtres : nom canonique + pays effectif
+      (celui saisi sur le pari, sinon celui déduit du nom). */
+  function betCompKey(b) {
+    const canon = Analytics.canonComp(b.competition);
+    const country = (b.country || '').trim() || (Analytics.compMeta(canon).region || '');
+    return canon + '\u241F' + country.toLowerCase();
   }
 
   function filteredBets() {
@@ -675,7 +702,7 @@
     return state.bets.filter((b) =>
       (!status || b.status === status) &&
       (!sport || b.sport === sport) &&
-      (!competition || Analytics.canonComp(b.competition) === competition) &&
+      (!competition || betCompKey(b) === competition) &&
       (!bookmaker || b.bookmaker === bookmaker) &&
       (!type || b.betType === type) &&
       (!tipster || b.tipster === tipster) &&
@@ -713,12 +740,14 @@
     const pageBets = bets.slice(start, start + BETS_PER_PAGE);
 
     $('#betsList').innerHTML = bets.length
-      ? `<div class="col-headers"><span>Pari</span><span class="r hide-m">Date</span><span class="r hide-m">Cote</span><span class="r hide-m">Mise</span><span class="r">P/L</span><span></span></div>`
+      ? `<div class="col-headers"><span class="ch-pick"><input type="checkbox" id="pickAllPage" aria-label="Tout sélectionner sur cette page"></span><span>Pari</span><span class="r hide-m">Date</span><span class="r hide-m">Cote</span><span class="r hide-m">Mise</span><span class="r">P/L</span><span></span></div>`
         + pageBets.map(betRowHTML).join('')
         + paginationHTML(bets.length, pages, start, pageBets.length)
       : '<div class="empty-state"><p>Aucun pari ne correspond à ces filtres.</p></div>';
     bindBetRowActions($('#betsList'));
     bindPagination(pages);
+    bindPickAll(pageBets);
+    renderBulkBar();
 
     // Bouton de vérification IA des résultats
     const overdue = pendingOverdue();
@@ -814,7 +843,11 @@
     const timingCls = b.status === 'pending' && tm.phase !== 'unknown' ? ` timing-${tm.phase}` : '';
     const liveScore = tm.phase === 'live' && tm.score ? `<span class="bet-live-score">${escapeHTML(tm.score)}</span>` : '';
 
-    return `<div class="bet-row${timingCls}" data-id="${b.id}">
+    const checked = state.selected.has(String(b.id)) ? ' checked' : '';
+    return `<div class="bet-row${timingCls}${checked ? ' selected' : ''}" data-id="${b.id}">
+      <label class="bet-pick" title="Sélectionner">
+        <input type="checkbox" data-pick${checked} aria-label="Sélectionner ce pari">
+      </label>
       <div class="bet-main">
         <div class="bet-event">${escapeHTML(b.event)}${liveScore}</div>
         <div class="bet-meta">${escapeHTML(b.selection)}<span class="sep">·</span>${escapeHTML(b.sport)}${typeTxt}<span class="sep">·</span>${escapeHTML(b.bookmaker)}</div>
@@ -861,8 +894,195 @@
           }
         });
       });
-      row.addEventListener('click', () => openBetModal(state.bets.find((b) => b.id === id)));
+      const pick = row.querySelector('[data-pick]');
+      if (pick) {
+        pick.addEventListener('click', (e) => e.stopPropagation());
+        pick.addEventListener('change', (e) => {
+          e.stopPropagation();
+          if (pick.checked) state.selected.add(String(id)); else state.selected.delete(String(id));
+          row.classList.toggle('selected', pick.checked);
+          renderBulkBar();
+          syncPickAll();
+        });
+      }
+      row.addEventListener('click', (e) => {
+        // Mode sélection actif : un clic sur la ligne coche/décoche au lieu d'ouvrir la fiche
+        if (state.selected.size && pick) { pick.checked = !pick.checked; pick.dispatchEvent(new Event('change')); return; }
+        if (e.target.closest('.bet-pick')) return;
+        openBetModal(state.bets.find((b) => b.id === id));
+      });
     });
+  }
+
+
+  /* ========================================================================
+     Édition groupée — sélection multiple dans « Mes paris »
+     Corrige en masse les métadonnées mal saisies (sport, compétition, pays),
+     notamment les compétitions homonymes : « Premier League » existe en
+     Angleterre ET en Ukraine, ce qui fusionnait deux ligues dans l'Analyse.
+     ======================================================================== */
+
+  /** Case « tout sélectionner » : agit sur la page affichée uniquement. */
+  function bindPickAll(pageBets) {
+    const all = $('#pickAllPage');
+    if (!all) return;
+    all.addEventListener('change', () => {
+      for (const b of pageBets) {
+        if (all.checked) state.selected.add(String(b.id)); else state.selected.delete(String(b.id));
+      }
+      $$('#betsList .bet-row').forEach((row) => {
+        const cb = row.querySelector('[data-pick]');
+        if (cb) { cb.checked = all.checked; row.classList.toggle('selected', all.checked); }
+      });
+      renderBulkBar();
+    });
+    syncPickAll();
+  }
+
+  /** Reflète l'état des lignes sur la case maîtresse (cochée / partielle / vide). */
+  function syncPickAll() {
+    const all = $('#pickAllPage');
+    if (!all) return;
+    const boxes = $$('#betsList .bet-row [data-pick]');
+    const n = boxes.filter((b) => b.checked).length;
+    all.checked = n > 0 && n === boxes.length;
+    all.indeterminate = n > 0 && n < boxes.length;
+  }
+
+  function renderBulkBar() {
+    const bar = $('#bulkBar');
+    if (!bar) return;
+    const n = state.selected.size;
+    bar.hidden = n === 0;
+    const lbl = $('#bulkCount');
+    if (lbl) lbl.textContent = n > 1 ? `${n} paris sélectionnés` : `${n} pari sélectionné`;
+  }
+
+  function clearSelection() {
+    state.selected.clear();
+    $$('#betsList .bet-row').forEach((row) => {
+      const cb = row.querySelector('[data-pick]');
+      if (cb) cb.checked = false;
+      row.classList.remove('selected');
+    });
+    syncPickAll();
+    renderBulkBar();
+  }
+
+  function bindBulk() {
+    $('#bulkClear')?.addEventListener('click', clearSelection);
+    $('#bulkEdit')?.addEventListener('click', openBulkModal);
+    $('#bulkDelete')?.addEventListener('click', bulkDelete);
+    $$('[data-close-bulk]').forEach((el) => el.addEventListener('click', closeBulkModal));
+    $('#bulkForm')?.addEventListener('submit', onBulkApply);
+    $('#bulkModal')?.addEventListener('click', (e) => { if (e.target === $('#bulkModal')) closeBulkModal(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (!$('#bulkModal')?.hidden) closeBulkModal();
+      else if (state.selected.size) clearSelection();
+    });
+  }
+
+  async function bulkDelete() {
+    const ids = [...state.selected];
+    if (!ids.length) return;
+    if (!confirm(`Supprimer ${ids.length} pari${ids.length > 1 ? 's' : ''} ? Cette action est définitive.`)) return;
+    for (const id of ids) await DB.deleteBet(id);
+    const set = new Set(ids);
+    state.bets = state.bets.filter((b) => !set.has(String(b.id)));
+    state.selected.clear();
+    renderAll();
+    toast(`${ids.length} pari${ids.length > 1 ? 's supprimés' : ' supprimé'}`);
+  }
+
+  function openBulkModal() {
+    if (!state.selected.size) return;
+    refreshBookmakerDatalist();
+    refreshCompetitionDatalist();
+    refreshCountryDatalist();
+    refreshSportDatalist();
+    $('#bulkForm').reset();
+    // Pré-remplit si toutes les lignes partagent déjà la même valeur (édition rapide)
+    const sel = state.bets.filter((b) => state.selected.has(String(b.id)));
+    const uniq = (key) => {
+      const vals = [...new Set(sel.map((b) => (b[key] || '').trim()).filter(Boolean))];
+      return vals.length === 1 ? vals[0] : '';
+    };
+    $('#bulkSport').value = uniq('sport');
+    $('#bulkCompetition').value = uniq('competition');
+    $('#bulkCountry').value = uniq('country');
+    $('#bulkBookmaker').value = uniq('bookmaker');
+    $('#bulkTitle').textContent = `Modifier ${sel.length} pari${sel.length > 1 ? 's' : ''}`;
+    $('#bulkModal').hidden = false;
+    document.body.style.overflow = 'hidden';
+    setTimeout(() => $('#bulkSport')?.focus(), 40);
+  }
+
+  function closeBulkModal() {
+    const m = $('#bulkModal');
+    if (!m) return;
+    m.hidden = true;
+    document.body.style.overflow = '';
+  }
+
+  async function onBulkApply(e) {
+    e.preventDefault();
+    const ids = [...state.selected];
+    const patch = {
+      sport: $('#bulkSport').value.trim(),
+      competition: $('#bulkCompetition').value.trim(),
+      country: $('#bulkCountry').value.trim(),
+      bookmaker: $('#bulkBookmaker').value.trim()
+    };
+    const n = await DB.bulkUpdateBets(ids, patch);
+    if (!n) { toast('Rien à modifier : aucun champ renseigné.'); return; }
+    state.bets = await DB.getBets();
+    state.selected.clear();
+    closeBulkModal();
+    renderAll();
+    toast(`${n} pari${n > 1 ? 's mis' : ' mis'} à jour`);
+  }
+
+  /** Suggestions de pays : celles déjà saisies (par fréquence) + les plus courantes. */
+  const COMMON_COUNTRIES = [
+    'France', 'Angleterre', 'Espagne', 'Italie', 'Allemagne', 'Portugal', 'Pays-Bas', 'Belgique',
+    'Écosse', 'Turquie', 'Ukraine', 'Russie', 'Pologne', 'Grèce', 'Croatie', 'Serbie', 'Suisse',
+    'Autriche', 'Roumanie', 'Danemark', 'Suède', 'Norvège', 'Finlande', 'Islande', 'Irlande',
+    'Tchéquie', 'Hongrie', 'Bulgarie', 'Slovaquie', 'Slovénie', 'Chypre', 'Israël',
+    'Brésil', 'Argentine', 'Chili', 'Colombie', 'Équateur', 'Pérou', 'Uruguay', 'Mexique',
+    'États-Unis', 'Canada', 'Japon', 'Corée du Sud', 'Chine', 'Australie', 'Nouvelle-Zélande',
+    'Maroc', 'Tunisie', 'Algérie', 'Égypte', 'Afrique du Sud', 'Europe', 'International'
+  ];
+  function refreshCountryDatalist() {
+    const el = $('#countryList');
+    if (!el) return;
+    const freq = new Map();
+    for (const b of state.bets) {
+      const c = (b.country || '').trim();
+      if (c) freq.set(c, (freq.get(c) || 0) + 1);
+    }
+    const used = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    const seen = new Set(used.map((c) => c.toLowerCase()));
+    const extra = COMMON_COUNTRIES.filter((c) => !seen.has(c.toLowerCase()));
+    el.innerHTML = [...used, ...extra].map((c) => `<option value="${escapeHTML(c)}"></option>`).join('');
+  }
+
+  /** Suggestions de sport : les sports déjà saisis en tête, puis le socle du formulaire.
+      Le socle initial du <datalist> est mémorisé au premier appel pour ne pas l'écraser. */
+  let SPORT_BASE = null;
+  function refreshSportDatalist() {
+    const el = document.getElementById('sportList');
+    if (!el) return;
+    if (!SPORT_BASE) SPORT_BASE = [...el.querySelectorAll('option')].map((o) => o.value || o.textContent.trim()).filter(Boolean);
+    const freq = new Map();
+    for (const b of state.bets) {
+      const c = (b.sport || '').trim();
+      if (c) freq.set(c, (freq.get(c) || 0) + 1);
+    }
+    const used = [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    const seen = new Set(used.map((c) => c.toLowerCase()));
+    const extra = SPORT_BASE.filter((c) => !seen.has(c.toLowerCase()));
+    el.innerHTML = [...used, ...extra].map((c) => `<option value="${escapeHTML(c)}"></option>`).join('');
   }
 
   /* ========================================================================
@@ -1136,6 +1356,7 @@
     document.body.style.overflow = 'hidden';
     refreshBookmakerDatalist();
     refreshCompetitionDatalist();
+    refreshCountryDatalist();
     $('#betModalTitle').textContent = bet ? 'Modifier le pari' : 'Nouveau pari';
     $('#saveBet').textContent = bet ? 'Enregistrer' : 'Valider le pari';
     resetScanUI();
@@ -1148,6 +1369,7 @@
     $('#fBookmaker').value = bet?.bookmaker || '';
     $('#fSport').value = bet?.sport || '';
     $('#fCompetition').value = bet?.competition || '';
+    if ($('#fCountry')) $('#fCountry').value = bet?.country || '';
     $('#fEvent').value = bet?.event || '';
     $('#fSelection').value = bet?.selection || '';
     $('#fType').value = bet?.betType || 'simple';
@@ -1253,6 +1475,7 @@
       bookmaker: $('#fBookmaker').value.trim(),
       sport: $('#fSport').value.trim(),
       competition: $('#fCompetition').value.trim(),
+      country: $('#fCountry')?.value.trim() || undefined,
       event: $('#fEvent').value.trim(),
       selection: $('#fSelection').value.trim(),
       betType: $('#fType').value,

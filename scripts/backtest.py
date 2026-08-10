@@ -187,9 +187,16 @@ def report(bets, n_matches, skipped, w, seuil):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('csv', nargs='+')
+    ap.add_argument('csv', nargs='*', help='par défaut : tous les CSV de data/backtest/')
     ap.add_argument('--w', type=float, default=0.45, help='poids du marché dans la proba finale')
     ap.add_argument('--seuil', type=float, default=2.0, help="edge minimum en %%")
     args = ap.parse_args()
-    b, n, s = run(args.csv, w_market=args.w, seuil=args.seuil)
+    paths = args.csv
+    if not paths:
+        import glob, os
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        paths = sorted(glob.glob(os.path.join(root, 'data', 'backtest', '*.csv')))
+        if not paths:
+            print("Aucune donnée : lancez d'abord scripts/collect_backtest.py"); raise SystemExit(1)
+    b, n, s = run(paths, w_market=args.w, seuil=args.seuil)
     report(b, n, s, args.w, args.seuil)

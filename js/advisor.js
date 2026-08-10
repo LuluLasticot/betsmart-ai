@@ -261,14 +261,18 @@ Termine par un unique bloc \`\`\`json :
   "verdict": "a_jouer" | "a_eviter",
   "resume": "3-4 phrases : lecture globale du match, information clé.",
   "marches": [
-    {"marche": "1N2", "selection": "…", "cote": 1.85, "cote_verifiee": true, "bookmaker": "…", "probabilite": 0.55, "value_pct": 1.8, "avis": "1 phrase"}
+    {"marche": "1N2", "selection": "…", "cote": 1.85, "cote_verifiee": true, "bookmaker": "…", "probabilite": 0.55, "value_pct": 1.8, "jouable": false, "avis": "1 phrase"}
   ],
   "meilleur_marche": "libellé du marché retenu ou null",
   "risques": "1-2 phrases.",
   "sources": ["site — ce qui a été vérifié"]
 }
 \`\`\`
-Ne force JAMAIS un verdict "a_jouer" : la plupart des matchs ne présentent aucune value exploitable.`;
+Ne force JAMAIS un verdict "a_jouer" : la plupart des matchs ne présentent aucune value exploitable.
+
+# COHÉRENCE — RÈGLE IMPÉRATIVE
+"jouable" doit refléter ta VRAIE conclusion sur ce marché, indépendamment du calcul de value. Si tu estimes que la cote intègre déjà l'information, que ton avantage est dans la marge d'erreur, ou que le marché est correctement pricé, mets "jouable": false — MÊME si value_pct ressort positif. Un value_pct légèrement positif issu d'une probabilité que tu as toi-même qualifiée d'incertaine n'est pas un pari, c'est du bruit.
+Ne mets JAMAIS "jouable": true sur un marché dont tu écris dans "avis" qu'il n'offre pas de marge exploitable : ce serait te contredire.`;
   }
 
   /* ------------------------------------------------------------------
@@ -389,13 +393,15 @@ Profil ${ctx.riskProfile} · Performance passée : ${ctx.userPerf}
 {
   "analyse_marche": "2-3 phrases sur le plateau du jour (sans parler de cotes).",
   "picks": [
-    {"option_id":"1n2_1","proba_basse":0.52,"proba_mediane":0.58,"proba_haute":0.64,"qualite":"A","confiance":4,
+    {"option_id":"1n2_1","proba_basse":0.52,"proba_mediane":0.58,"proba_haute":0.64,"qualite":"A","confiance":4,"verdict":"jouer",
      "analyse":"3-5 phrases FACTUELLES, chiffrées, issues de ta recherche.","risques":"1-2 phrases : ce qui invaliderait l'analyse.",
      "sources":["source 1 — ce qui a été vérifié","source 2 — confirmation indépendante"]}
   ]
 }
 \`\`\`
-"option_id" DOIT être l'un des id fournis. Deux sources minimum par pick. Ne mentionne aucune cote.`;
+"option_id" DOIT être l'un des id fournis. Deux sources minimum par pick. Ne mentionne aucune cote.
+
+"verdict" vaut "jouer" ou "passer" et exprime ta conviction RÉELLE, indépendamment de tout calcul : mets "passer" dès que ton estimation repose sur une information que le marché connaît forcément aussi, ou que ta fourchette est trop large pour trancher. Un pick marqué "passer" ne sera pas proposé, quelle que soit la value calculée ensuite — c'est le mécanisme qui te permet de signaler « j'ai analysé, mais il n'y a rien à jouer ici ».`;
   }
 
   async function suggestFromCoteurMarkets(apiKey, model, ctx, candidates, onProgress) {
@@ -483,6 +489,163 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
       .filter((m) => m && typeof m.cote === 'number' && typeof m.probabilite === 'number')
       .map((m) => ({ ...m, value_pct: Math.round((m.probabilite * m.cote - 1) * 1000) / 10 }));
     return parsed;
+  }
+
+
+  /* ------------------------------------------------------------------
+     Auto-élagage par CLV
+     --------------------------------------------------------------------
+     La CLV (cote prise / cote de clôture − 1) est le seul indicateur de
+     qualité disponible AVANT de connaître les résultats, et il est bien
+     moins bruité que le ROI : un pari sur deux est perdant par nature, mais
+     une CLV négative répétée signifie qu'on paie systématiquement trop cher.
+
+     Principe : ventiler les picks par segment (sport, type de marché,
+     tranche de cote, délai avant le coup d'envoi), puis désactiver les
+     segments dont la CLV moyenne est négative DE FAÇON STATISTIQUEMENT
+     LISIBLE. La condition de significativité est essentielle : sur 8 paris,
+     une CLV de −3 % ne veut rien dire.
+     ------------------------------------------------------------------ */
+
+  /** Tranche de cote — la marge des books et le biais favori-outsider
+      varient énormément d'une tranche à l'autre. */
+  function oddsBand(cote) {
+    const c = Number(cote);
+    if (!(c > 1)) return null;
+    if (c < 1.5) return 'cote < 1,50';
+    if (c < 2) return 'cote 1,50–2,00';
+    if (c < 3) return 'cote 2,00–3,00';
+    return 'cote ≥ 3,00';
+  }
+
+  /** Délai entre la prise de position et le coup d'envoi. Les lignes ouvrent
+      molles et se resserrent : le moment où l'on parie pèse souvent plus que
+      le choix du pari lui-même. */
+  function leadBand(pick) {
+    const ko = Number(pick.kickoff), at = Number(pick.createdAt || pick.at);
+    if (!(ko > 0) || !(at > 0)) return null;
+    const h = (ko - at) / 3600e3;
+    if (h < 0) return null;
+    if (h < 2) return 'pris < 2 h avant';
+    if (h < 12) return 'pris 2–12 h avant';
+    if (h < 36) return 'pris 12–36 h avant';
+    return 'pris > 36 h avant';
+  }
+
+  /** Famille de marché (1N2, over/under, handicap…). */
+  function marketFamily(marche) {
+    const m = String(marche || '').toLowerCase();
+    if (/1n2|moneyline|vainqueur|winner/.test(m)) return 'vainqueur';
+    if (/over|under|total|plus de|moins de/.test(m)) return 'total';
+    if (/handicap|spread|run line|écart/.test(m)) return 'handicap';
+    if (/double chance/.test(m)) return 'double chance';
+    return m ? 'autre' : null;
+  }
+
+  function segmentsOf(pick) {
+    const out = [];
+    if (pick.sport) out.push(['sport', String(pick.sport)]);
+    const fam = marketFamily(pick.marche);
+    if (fam) out.push(['marché', fam]);
+    const band = oddsBand(pick.cote);
+    if (band) out.push(['cote', band]);
+    const lead = leadBand(pick);
+    if (lead) out.push(['timing', lead]);
+    return out;
+  }
+
+  /**
+   * Bilan de CLV par segment.
+   * @returns [{ dim, key, n, avgClv, se, ci95, verdict }] trié du pire au meilleur.
+   *   verdict : 'exclu' (négatif et significatif) | 'surveille' | 'ok'
+   */
+  function statsOf(vals) {
+    const n = vals.length;
+    if (!n) return null;
+    const mean = vals.reduce((a, b) => a + b, 0) / n;
+    const varr = n > 1 ? vals.reduce((a, v) => a + (v - mean) ** 2, 0) / (n - 1) : 0;
+    const se = n > 1 ? Math.sqrt(varr / n) : null;
+    return { n, mean, ci95: se != null ? 1.96 * se : null };
+  }
+
+  function tally(picks) {
+    const map = new Map();
+    for (const p of picks) {
+      for (const [dim, key] of segmentsOf(p)) {
+        const id = dim + '|' + key;
+        if (!map.has(id)) map.set(id, { dim, key, vals: [] });
+        map.get(id).vals.push(p.clv);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Exclusion GLOUTONNE et itérative. Les segments se recoupent : un pick de
+   * baseball appartient aussi à une tranche de cote et à une tranche de délai.
+   * Une évaluation en un seul passage exclut donc des segments sains, simplement
+   * contaminés par les picks du segment réellement fautif. On retire donc le pire
+   * segment, on en écarte les picks, et on réévalue — jusqu'à ce que plus rien
+   * ne soit exclu. Un segment sain le reste, une fois le coupable isolé.
+   *
+   * @param minN     nombre minimum de picks pour qu'un segment soit jugeable
+   * @param material CLV en dessous de laquelle la perte est jugée matérielle (%)
+   */
+  function clvSegments(picks, { minN = 12, material = -1 } = {}) {
+    let live = (picks || []).filter((p) => typeof p.clv === 'number' && isFinite(p.clv));
+    const excluded = new Map();
+
+    for (let pass = 0; pass < 6; pass++) {
+      let worst = null;
+      for (const { dim, key, vals } of tally(live).values()) {
+        const st = statsOf(vals);
+        if (!st || st.n < minN || st.ci95 == null) continue;
+        // Deux conditions cumulatives : la perte doit être MATÉRIELLE (au-delà
+        // du simple bruit de mesure) et STATISTIQUEMENT établie (l'intervalle
+        // de confiance à 95 % reste entièrement sous zéro).
+        if (st.mean >= material || (st.mean + st.ci95) >= 0) continue;
+        if (!worst || st.mean < worst.st.mean) worst = { dim, key, st };
+      }
+      if (!worst) break;
+      const id = worst.dim + '|' + worst.key;
+      excluded.set(id, { dim: worst.dim, key: worst.key, n: worst.st.n, mean: worst.st.mean, ci95: worst.st.ci95 });
+      live = live.filter((p) => !segmentsOf(p).some(([d, k]) => d === worst.dim && k === worst.key));
+    }
+
+    // Bilan final : chaque segment est réévalué sur l'échantillon restant,
+    // sauf ceux déjà exclus, qui conservent leurs chiffres du moment de l'exclusion.
+    const rows = [];
+    for (const e of excluded.values()) {
+      rows.push({ dim: e.dim, key: e.key, n: e.n,
+        avgClv: Math.round(e.mean * 100) / 100,
+        ci95: e.ci95 != null ? Math.round(e.ci95 * 100) / 100 : null,
+        verdict: 'exclu' });
+    }
+    for (const { dim, key, vals } of tally(live).values()) {
+      const st = statsOf(vals);
+      if (!st) continue;
+      rows.push({ dim, key, n: st.n,
+        avgClv: Math.round(st.mean * 100) / 100,
+        ci95: st.ci95 != null ? Math.round(st.ci95 * 100) / 100 : null,
+        verdict: (st.mean < material && st.n >= minN) ? 'surveille' : 'ok' });
+    }
+    return rows.sort((a, b) => a.avgClv - b.avgClv);
+  }
+
+  /** Ensemble des segments à exclure, sous forme consultable rapidement. */
+  function clvBlocklist(picks, opts) {
+    const set = new Set();
+    for (const r of clvSegments(picks, opts)) if (r.verdict === 'exclu') set.add(r.dim + '|' + r.key);
+    return set;
+  }
+
+  /** Un pick candidat tombe-t-il dans un segment exclu ? Renvoie la raison ou null. */
+  function clvBlocked(blocklist, candidate) {
+    if (!blocklist || !blocklist.size) return null;
+    for (const [dim, key] of segmentsOf(candidate)) {
+      if (blocklist.has(dim + '|' + key)) return `${dim} « ${key} » : CLV durablement négative sur votre historique`;
+    }
+    return null;
   }
 
   /* ------------------------------------------------------------------
@@ -595,5 +758,7 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
   const setFallbackHandler = (fn) => { onFallback = fn; };
   const setWaitHandler = (fn) => { onWait = fn; };
 
-  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats, feedbackBlock, setFallbackHandler, setWaitHandler, PROFILES };
+  return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats,
+    clvSegments, clvBlocklist, clvBlocked, oddsBand, leadBand, marketFamily,
+    feedbackBlock, setFallbackHandler, setWaitHandler, PROFILES };
 })();

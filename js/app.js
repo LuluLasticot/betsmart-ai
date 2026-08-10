@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v86';
+  const APP_VERSION = 'v87';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -1856,7 +1856,7 @@
       // statiques. Aucun appel réseau facturé, aucune cote — compatible phase A.
       let anchor = null;
       try {
-        anchor = await Anchor.forMatch({ sport: m.sport, home: mk.home, away: mk.away, competition: m.league });
+        anchor = await Anchor.forMatch({ sport: m.sport, home: mk.home, away: mk.away, competition: m.league, when: m.date });
       } catch (_) {}
       const marches = mk.markets.map((mrk) => ({
         marche: mrk.label,
@@ -1915,6 +1915,10 @@
   /** Reconstruit des picks complets à partir des option_id choisis par Gemini. */
   function mapCoteurMarketPicks(rawResult, index, marketWeight = 0.65) {
     const rejected = [];   // picks écartés par le garde-fou (affichés à l'utilisateur)
+    // Segments à CLV durablement négative sur VOTRE historique : le Radar
+    // apprend de ses erreurs de prix au lieu d'attendre que vous les repériez.
+    let blocklist = null;
+    try { blocklist = Advisor.clvBlocklist(state.picks); } catch (_) {}
     const picks = (rawResult.picks || [])
       .map((p) => {
         const info = index[p.option_id];
@@ -1930,6 +1934,25 @@
         // Qualité de dossier : A/B seulement (D = information insuffisante)
         const grade = String(p.qualite || 'B').toUpperCase();
         if (grade === 'C' || grade === 'D') return null;
+
+        // AUTO-ÉLAGAGE : ce segment vous a-t-il coûté du prix de façon répétée ?
+        if (blocklist && blocklist.size) {
+          const blocked = Advisor.clvBlocked(blocklist, {
+            sport: info.sport, marche: info.marche, cote: info.cote,
+            kickoff: info.kickoff, createdAt: Date.now()
+          });
+          if (blocked) { rejected.push({ match: info.match, selection: info.selection, reason: blocked }); return null; }
+        }
+
+        // DÉTECTEUR DE CONTRADICTION : l'IA a le dernier mot sur sa propre
+        // conviction. Un "passer" explicite prime sur toute value calculée —
+        // sans ça, une probabilité prudente multipliée par une grosse cote
+        // fabrique un pari que l'IA n'a jamais recommandé.
+        if (String(p.verdict || '').toLowerCase() === 'passer') {
+          rejected.push({ match: info.match, selection: info.selection,
+            reason: 'l\'analyse conclut explicitement qu\'il n\'y a rien à jouer sur ce marché' });
+          return null;
+        }
 
         // GARDE-FOU MODÈLE : une estimation très supérieure à celle du modèle
         // quantitatif est écartée. C'est exactement le profil des picks
@@ -2211,7 +2234,7 @@
         // quota épuisé) ou ne couvre pas le sport.
         if ((!facts || facts.noData) && typeof Anchor !== 'undefined') {
           try {
-            const anc = await Anchor.forMatch({ sport: lastAnalyzeSport, home, away, competition: lastAnalyzeComp || query });
+            const anc = await Anchor.forMatch({ sport: lastAnalyzeSport, home, away, competition: lastAnalyzeComp || query, when: lastAnalyzeKick || undefined });
             if (anc) {
               lastAnalyzeAnchor = anc;
               facts = { anchored: true, text: `# DONNÉES RÉELLES VÉRIFIÉES (${anc.source}) :\n- ${anc.blind}\nCes mesures sont acquises : ne les recontrôle pas, et ne les contredis qu'avec un fait récent et précis.` };
@@ -2402,8 +2425,9 @@
     const mode = state.settings.stakingMode || 'kelly';
     const k = Stats.kpis(state.bets, effInitial(), state.txs);
     // Verdict basé sur les cotes RÉELLES vérifiées (pas sur les cotes estimées par le modèle)
-    const hasRealValue = (r.marches || []).some((m) => {
+    const hasRealValue = r.verdict !== 'a_eviter' && (r.marches || []).some((m) => {
       if (m.cote_verifiee === false || Number(m.value_pct) < 2) return false;
+      if (m.jouable === false) return false;
       if (!lastAnalyzeAnchor) return true;
       try { return Anchor.check(lastAnalyzeAnchor, r.match || '', m.marche, m.selection, m.probabilite).ok; } catch (_) { return true; }
     });
@@ -2415,7 +2439,7 @@
           <h3>${escapeHTML(r.match)}</h3>
           <div class="pick-meta">${escapeHTML(r.sport || '')} · ${escapeHTML(r.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
         </div>
-        <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : 'Pas de +EV net'}</span>
+        <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : r.verdict === 'a_eviter' ? 'À éviter selon l\'analyse' : 'Pas de +EV net'}</span>
       </div>
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
       ${factsHTML}
@@ -2436,9 +2460,13 @@
           if (lastAnalyzeAnchor) {
             try { mGuard = Anchor.check(lastAnalyzeAnchor, r.match || '', m.marche, m.selection, m.probabilite); } catch (_) {}
           }
-          const good = verified && m.value_pct >= 2 && mGuard.ok;   // vraie value (+EV net)
-          const playable = verified && m.value_pct >= 0 && mGuard.ok;
-          const stake = (verified && mGuard.ok) ? Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake : 0;
+          // L'IA garde la main sur sa conclusion : "jouable": false (ou un
+          // verdict global "a_eviter") l'emporte sur un value_pct positif.
+          const aiSaysNo = m.jouable === false || r.verdict === 'a_eviter';
+          const cleared = mGuard.ok && !aiSaysNo;
+          const good = verified && m.value_pct >= 2 && cleared;   // vraie value (+EV net)
+          const playable = verified && m.value_pct >= 0 && cleared;
+          const stake = (verified && cleared) ? Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake : 0;
           const bookTxt = m.live ? ' · ✓ direct' : m.notMyBook ? ` · ${escapeHTML(m.bookmaker || '')} (hors de vos books)` : verified ? '' : ' · cote estimée, non vérifiée';
           return `<div class="market-row">
             <div><strong>${escapeHTML(m.selection)}</strong><div class="pick-meta">${escapeHTML(m.marche || '')}${verified ? ' · ' + escapeHTML(m.bookmaker || '') : ''}${bookTxt}</div></div>
@@ -2452,6 +2480,7 @@
               : `<div class="bet-profit market-val zero"><span class="market-unverified">non vérifiée</span></div>`}
             <div class="avis">
               ${!mGuard.ok ? `<div class="avis-guard">⚠ Écarté par le garde-fou : ${escapeHTML(mGuard.reason || '')}.</div>` : ''}
+              ${(mGuard.ok && aiSaysNo && m.value_pct >= 0) ? `<div class="avis-guard">⚠ Value calculée positive, mais l'analyse conclut de ne pas jouer — c'est sa conclusion qui prime.</div>` : ''}
               <div class="avis-text">${escapeHTML(m.avis || '')}</div>
               <div class="mycote-row">
                 <span class="mycote-lbl">Ta cote</span>
@@ -3267,6 +3296,35 @@
 
   /* ---- Onglet CLV : la boussole (battre la cote de clôture) ---- */
   /** Détail des picks dont la CLV a été mesurée : cote prise vs cote de clôture. */
+
+  /** Tableau des segments de CLV : ce que le Radar a appris à éviter.
+      L'intervalle de confiance est affiché pour que rien ne soit sur-interprété
+      — c'est lui qui fait la différence entre un vrai problème et du bruit. */
+  function segmentPanel(picks) {
+    let rows = [];
+    try { rows = Advisor.clvSegments(picks); } catch (_) { return ''; }
+    if (!rows.length) return '';
+    const shown = rows.filter((r) => r.verdict !== 'ok' || Math.abs(r.avgClv) >= 0.5).slice(0, 14);
+    if (!shown.length) return '';
+    const nExcl = rows.filter((r) => r.verdict === 'exclu').length;
+    const badge = { exclu: 'neg', surveille: 'zero', ok: 'pos' };
+    const label = { exclu: 'exclu', surveille: 'à surveiller', ok: 'sain' };
+    return `<div class="panel"><div class="panel-head"><h2>Segments — auto-élagage</h2>
+        <span class="field-hint" style="margin:0">${nExcl ? `${nExcl} segment${nExcl > 1 ? 's' : ''} désormais écarté${nExcl > 1 ? 's' : ''} automatiquement` : 'aucun segment écarté'}</span></div>
+      <div class="col-headers" style="grid-template-columns:1fr 80px 52px 108px 96px">
+        <span>Segment</span><span>Type</span><span class="r">Picks</span><span class="r">CLV moy.</span><span class="r">Statut</span>
+      </div>
+      ${shown.map((r) => `<div class="bet-row" style="grid-template-columns:1fr 80px 52px 108px 96px">
+        <div class="bet-main"><div class="bet-event">${escapeHTML(r.key)}</div></div>
+        <div class="bet-num">${escapeHTML(r.dim)}</div>
+        <div class="bet-num r">${r.n}</div>
+        <div class="bet-num r ${r.avgClv >= 0 ? 'pos' : 'neg'}">${r.avgClv >= 0 ? '+' : ''}${r.avgClv} %${r.ci95 != null ? `<div class="model-mini">± ${r.ci95}</div>` : ''}</div>
+        <div class="bet-profit ${badge[r.verdict]}">${label[r.verdict]}</div>
+      </div>`).join('')}
+      <p class="calib-note" style="margin-top:12px">Un segment n'est écarté que si sa perte de prix est <strong>matérielle</strong> (au-delà de −1 %) <strong>et</strong> statistiquement établie : son intervalle de confiance à 95 % doit rester entièrement sous zéro. Une mauvaise série ne suffit pas — c'est ce qui évite de couper sur du bruit. L'analyse est itérative : le pire segment est isolé d'abord, puis les autres sont réévalués sans lui, pour ne pas condamner un segment sain simplement contaminé par le fautif.</p>
+    </div>`;
+  }
+
   function clvRows(picks) {
     const RES = { won: ['Gagné', 'pos'], lost: ['Perdu', 'neg'], void: ['Annulé', ''] };
     return picks
@@ -3340,6 +3398,7 @@
           ${sportRows.map((r) => `<div class="bet-row" style="grid-template-columns:1fr 56px 88px 84px"><div class="bet-main"><div class="bet-event">${escapeHTML(r.name)}</div></div><div class="bet-num r">${r.n}</div><div class="bet-num r ${cls(r.avg)}">${r.avg >= 0 ? '+' : ''}${r.avg} %</div><div class="bet-num r">${r.pos} %</div></div>`).join('')}
         </div>
       </div>
+      ${segmentPanel(picks)}
       <div class="panel"><div class="panel-head"><h2>Détail des picks mesurés</h2><span class="field-hint" style="margin:0">${n} pick${n > 1 ? 's' : ''} · triés du plus récent</span></div>
         <div class="col-headers clv-grid">
           <span>Match</span><span class="r hide-m">Prise</span><span class="r hide-m">Clôture</span><span class="r">CLV</span><span class="r hide-m">Proba</span><span class="r">Résultat</span>

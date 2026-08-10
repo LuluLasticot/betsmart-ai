@@ -94,7 +94,7 @@ const Anchor = (() => {
      sur 10. Sans le lanceur partant annoncé, l'estimation reste grossière —
      d'où une qualité dégradée qui rendra le Radar plus exigeant.
      ====================================================================== */
-  async function baseball({ home, away }) {
+  async function baseball({ home, away, when }) {
     const t = await table('mlb-ratings');
     const H = lookup(home, t), A = lookup(away, t);
     if (!H || !A) return null;
@@ -102,12 +102,30 @@ const Anchor = (() => {
     // Log5 (Bill James) : probabilité que A batte B à partir de leurs niveaux
     let p = (a - a * b) / (a + b - 2 * a * b);
     p = Math.max(0.05, Math.min(0.95, p + (t.hfa ?? 0.04)));
+
+    // Duel de lanceurs partants — le facteur dominant du baseball.
+    let st = null;
+    if (typeof MLB !== 'undefined') {
+      try { st = await MLB.starters({ home, away, when }); } catch (_) {}
+    }
+    let quality = 'low', pitchLine = ' Lanceurs partants non disponibles : estimation grossière.';
+    if (st && st.edge) {
+      p = Math.max(0.05, Math.min(0.95, p + st.edge.delta));
+      quality = st.edge.quality === 'ok' ? 'mid' : 'low';
+      pitchLine = ' ' + st.edge.text;
+    } else if (st && st.reason) {
+      pitchLine = ` Lanceurs partants : ${st.reason}. Sans eux, abstiens-toi plutôt que d'estimer au jugé.`;
+    }
+
     return {
       sport: 'baseball', source: `MLB StatsAPI ${t.season}`, updated: t.updated,
       teams: { home: [home, H.key], away: [away, A.key] },
       prob: { home: p, draw: null, away: 1 - p },
-      quality: 'low',   // le partant n'est pas dans la table → prudence accrue
-      blind: `Niveau d'équipe ${t.season} — ${home} : ${H.rpg_for} points marqués et ${H.rpg_ag} encaissés par match, bilan ${H.w}-${H.l} · ${away} : ${A.rpg_for} marqués, ${A.rpg_ag} encaissés, bilan ${A.w}-${A.l}. Le lanceur partant n'est PAS inclus : vérifie-le, il pèse plus que tout le reste.`
+      // Même avec les partants, le baseball reste le sport le plus bruité :
+      // on ne monte jamais au-delà de 'mid', ce qui garde un seuil de rejet large.
+      quality,
+      starters: st && st.edge ? { delta: st.edge.delta, home: st.home, away: st.away } : null,
+      blind: `Niveau d'équipe ${t.season} — ${home} : ${H.rpg_for} points marqués et ${H.rpg_ag} encaissés par match, bilan ${H.w}-${H.l} · ${away} : ${A.rpg_for} marqués, ${A.rpg_ag} encaissés, bilan ${A.w}-${A.l}.${pitchLine}`
     };
   }
 
@@ -155,11 +173,11 @@ const Anchor = (() => {
 
   /** Ancrage d'un match. Renvoie null si le sport ou les équipes sont inconnus
       — le Radar fonctionne alors comme avant, sans garde-fou. */
-  async function forMatch({ sport, home, away, competition }) {
+  async function forMatch({ sport, home, away, competition, when }) {
     const s = norm(sport);
     for (const [re, fn] of ROUTES) {
       if (!re.test(s)) continue;
-      try { return await fn({ home, away, competition }); } catch (_) { return null; }
+      try { return await fn({ home, away, competition, when }); } catch (_) { return null; }
     }
     return null;
   }
@@ -229,7 +247,8 @@ const Anchor = (() => {
     const mp = outcomeFor(anchor, matchLabel, marche, selection);
     if (mp == null || !(aiProb > 0 && aiProb < 1)) return { ok: true, modelProb: null, gap: null };
     let tol = TOL[anchor.sport] ?? 0.15;
-    if (anchor.quality === 'low') tol += 0.06; // modèle volontairement peu contraignant
+    if (anchor.quality === 'low') tol += 0.06;      // modèle volontairement peu contraignant
+    else if (anchor.quality === 'mid') tol += 0.03;  // partants connus : on resserre un peu
     const gap = aiProb - mp;
     if (gap > tol) {
       return {

@@ -450,9 +450,46 @@ const Coteur = (() => {
 
     const markets = [];
 
-    // Dévigorisation : probabilités "justes" à partir de la meilleure ligne
+    // Dévigorisation : probabilités « justes » à partir de la meilleure ligne
     // globale (best, qui intègre les books sharp type Pinnacle) sur toutes
     // les issues du marché → référence de marché sans marge.
+    //
+    // Méthode PUISSANCE plutôt que proportionnelle. La méthode proportionnelle
+    // (diviser chaque probabilité implicite par leur somme) retire la même
+    // fraction de marge à toutes les issues, ce qui est faux : les books
+    // chargent nettement plus de marge sur les outsiders que sur les favoris
+    // (biais favori-outsider, largement documenté). Résultat, elle surestime
+    // les probabilités des outsiders et fabrique de la value fantôme sur les
+    // grosses cotes — exactement le profil de paris qui a le plus perdu.
+    //
+    // La méthode puissance cherche l'exposant k tel que Σ (1/cote_i)^k = 1.
+    // Comme k > 1, elle comprime davantage les petites probabilités.
+    const devigPower = (imps) => {
+      const vals = Object.values(imps);
+      const sum = vals.reduce((a, b) => a + b, 0);
+      if (!(sum > 0)) return null;
+      // Marge quasi nulle (ligne composite entre books) : rien à corriger.
+      if (Math.abs(sum - 1) < 1e-4) return { ...imps };
+      const total = (k) => vals.reduce((a, p) => a + Math.pow(p, k), 0);
+      let lo = 0.5, hi = 3;
+      // La somme décroît quand k croît : on encadre puis on bissecte.
+      if (total(lo) < 1) return null;
+      let guard = 0;
+      while (total(hi) > 1 && hi < 12 && guard++ < 30) hi *= 1.5;
+      if (total(hi) > 1) return null;
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        if (total(mid) > 1) lo = mid; else hi = mid;
+      }
+      const k = (lo + hi) / 2;
+      const out = {};
+      let norm = 0;
+      for (const [key, p] of Object.entries(imps)) { out[key] = Math.pow(p, k); norm += out[key]; }
+      // Renormalisation de sécurité (la bissection laisse une erreur résiduelle)
+      for (const key of Object.keys(out)) out[key] /= norm;
+      return out;
+    };
+
     const devig = (src, keys) => {
       const imp = {}; let sum = 0;
       for (const k of keys) {
@@ -460,6 +497,10 @@ const Coteur = (() => {
         if (o && Number(o.cote) > 1) { imp[k] = 1 / Number(o.cote); sum += imp[k]; }
       }
       if (sum <= 0) return {};
+      // Repli proportionnel si la résolution numérique échoue (marché à une
+      // seule issue cotée, données aberrantes…).
+      const pow = Object.keys(imp).length >= 2 ? devigPower(imp) : null;
+      if (pow) return pow;
       const fair = {};
       for (const k of Object.keys(imp)) fair[k] = imp[k] / sum;
       return fair;

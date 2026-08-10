@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v89';
+  const APP_VERSION = 'v90';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2229,15 +2229,21 @@
         } else if (state.settings.apiFootballKey && typeof Facts !== 'undefined') {
           try { facts = await Facts.matchFacts({ home, away, sport: lastAnalyzeSport, apiKey: state.settings.apiFootballKey }); } catch (_) {}
         }
-        // Repli sur les tables d'ancrage : elles ne dépendent ni d'une clé ni
-        // d'un quota. Indispensable quand api-sports échoue (clé invalide,
-        // quota épuisé) ou ne couvre pas le sport.
-        if ((!facts || facts.noData) && typeof Anchor !== 'undefined') {
+        // ANCRAGE : calculé SYSTÉMATIQUEMENT, jamais en simple repli. Le
+        // calculer seulement quand les faits manquaient était un bug visible à
+        // l'écran : sur un match de tennis, le panneau Elo s'affichait ET le
+        // bandeau « aucun ancrage » juste en dessous, puisque TennisElo avait
+        // réussi et court-circuitait le calcul. Résultat : aucun garde-fou là
+        // où l'on disposait pourtant du meilleur modèle.
+        if (typeof Anchor !== 'undefined') {
           try {
             const anc = await Anchor.forMatch({ sport: lastAnalyzeSport, home, away, competition: lastAnalyzeComp || query, when: lastAnalyzeKick || undefined });
             if (anc) {
               lastAnalyzeAnchor = anc;
-              facts = { anchored: true, text: `# DONNÉES RÉELLES VÉRIFIÉES (${anc.source}) :\n- ${anc.blind}\nCes mesures sont acquises : ne les recontrôle pas, et ne les contredis qu'avec un fait récent et précis.` };
+              // Les faits ne sont remplacés que s'il n'y en avait pas.
+              if (!facts || facts.noData) {
+                facts = { anchored: true, text: `# DONNÉES RÉELLES VÉRIFIÉES (${anc.source}) :\n- ${anc.blind}\nCes mesures sont acquises : ne les recontrôle pas, et ne les contredis qu'avec un fait récent et précis.` };
+              }
             }
           } catch (_) {}
         }
@@ -2384,7 +2390,13 @@
     if (!facts || facts.noData) {
       let hint;
       if (facts && facts.noData) {
-        hint = `Données factuelles indisponibles pour ce match — ${escapeHTML(facts.reason || 'raison inconnue')}.`;
+        // Le palier gratuit d'api-sports ne donne accès qu'aux saisons 2022-2024 :
+        // la clé est valide, c'est l'abonnement qui exclut la saison en cours.
+        // Le message brut laissait croire à une panne ou à une clé cassée.
+        const raw = String(facts.reason || '');
+        hint = /free plan/i.test(raw)
+          ? `Api-sports ne renvoie rien : votre <strong>palier gratuit ne couvre que les saisons 2022 à 2024</strong>, pas la saison en cours. La clé est valide, c'est l'abonnement qui limite. Les modèles d'ancrage (Elo, MLB, ratings) ne dépendent pas d'api-sports et continuent de fonctionner.`
+          : `Données factuelles indisponibles pour ce match — ${escapeHTML(raw || 'raison inconnue')}.`;
       } else if (!state.settings.apiFootballKey) {
         hint = 'Ajoutez votre clé api-sports.io dans les Réglages pour des faits réels (forme, buts, xG au foot, H2H).';
       } else {
@@ -2467,7 +2479,15 @@
           <h3>${escapeHTML(r.match)}</h3>
           <div class="pick-meta">${escapeHTML(r.sport || '')} · ${escapeHTML(r.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
         </div>
-        ${(r.marches || []).some((m) => priceOutlier(m)) ? '<span class="verdict-badge shop">Prix en retard détecté</span>' : ''}
+        ${(r.marches || []).some((m) => {
+          const po = priceOutlier(m);
+          if (!po || !lastAnalyzeAnchor) return false;
+          try {
+            const g = Anchor.check(lastAnalyzeAnchor, r.match || '', m.marche, m.selection, m.probabilite);
+            return g.ok && g.modelProb != null && (g.modelProb * Number(m.cote) - 1) >= 0.03;
+          } catch (_) { return false; }
+        }) ? '<span class="verdict-badge shop">Prix en retard exploitable</span>'
+          : (r.marches || []).some((m) => priceOutlier(m)) ? '<span class="verdict-badge shop-weak">Prix en retard (non confirmé)</span>' : ''}
         <span class="verdict-badge ${hasRealValue ? 'play' : 'avoid'}">${hasRealValue ? 'Value détectée' : r.verdict === 'a_eviter' ? 'À éviter selon l\'analyse' : 'Pas de +EV net'}</span>
       </div>
       <p class="pick-analysis">${escapeHTML(r.resume || '')}</p>
@@ -2496,7 +2516,16 @@
           // L'IA garde la main sur sa conclusion : "jouable": false (ou un
           // verdict global "a_eviter") l'emporte sur un value_pct positif.
           const aiSaysNo = m.jouable === false || r.verdict === 'a_eviter';
-          const cleared = mGuard.ok && !aiSaysNo;
+
+          // PRIX EN RETARD + MODÈLE FAVORABLE = le refus de l'IA ne s'applique pas.
+          // L'IA évalue la value sur le prix CONSENSUS qu'elle a observé, pas sur
+          // celui qui vous est offert. Quand un book est en retard, elle conclut
+          // « déjà intégré » à propos d'un prix que vous n'auriez de toute façon
+          // pas pris. Son refus porte alors sur un autre pari que le vôtre.
+          const po = priceOutlier(m);
+          const modelEdge = mGuard.modelProb != null ? (mGuard.modelProb * Number(m.cote) - 1) : null;
+          const priceOpportunity = !!po && modelEdge != null && modelEdge >= 0.03 && mGuard.ok;
+          const cleared = mGuard.ok && (!aiSaysNo || priceOpportunity);
           const good = verified && m.value_pct >= 2 && cleared;   // vraie value (+EV net)
           const playable = verified && m.value_pct >= 0 && cleared;
           const stake = (verified && cleared) ? Advisor.stakeFor(k.bankroll, m, profileKey, mode).stake : 0;
@@ -2513,8 +2542,13 @@
               : `<div class="bet-profit market-val zero"><span class="market-unverified">non vérifiée</span></div>`}
             <div class="avis">
               ${!mGuard.ok ? `<div class="avis-guard">⚠ Écarté par le garde-fou : ${escapeHTML(mGuard.reason || '')}.</div>` : ''}
-              ${(() => { const po = priceOutlier(m); return po ? `<div class="avis-shop">💰 <strong>Prix en retard :</strong> ${escapeHTML(m.bookmaker || 'ce book')} affiche ${Number(m.cote).toFixed(2)} alors que le marché est autour de ${po.ref.toFixed(2)} — soit <strong>+${po.pct} %</strong> de prix. C'est le signal le plus exploitable qui existe, indépendamment de toute prédiction. À vérifier avant de miser : le consensus est celui rapporté par l'analyse, pas une mesure.</div>` : ''; })()}
-              ${(mGuard.ok && aiSaysNo && m.value_pct >= 0) ? `<div class="avis-guard">⚠ Value calculée positive, mais l'analyse conclut de ne pas jouer — c'est sa conclusion qui prime.</div>` : ''}
+              ${po ? `<div class="avis-shop">💰 <strong>Prix en retard :</strong> ${escapeHTML(m.bookmaker || 'ce book')} affiche ${Number(m.cote).toFixed(2)} quand le marché est autour de ${po.ref.toFixed(2)} — <strong>+${po.pct} %</strong> de prix.${
+                modelEdge == null ? ' Aucun modèle ne couvre cette issue : à confirmer vous-même avant de miser.'
+                : modelEdge >= 0.03 ? ` Le modèle valide l'issue (${Math.round(mGuard.modelProb * 100)} %), ce qui donne <strong>${(modelEdge * 100).toFixed(1)} %</strong> d'avantage à ce prix.`
+                : ` Attention : le modèle juge cette issue surévaluée (${Math.round(mGuard.modelProb * 100)} % seulement, soit ${(modelEdge * 100).toFixed(1)} % à ce prix). Un meilleur prix sur un mauvais pari reste un mauvais pari.`
+              } Le consensus est celui rapporté par l'analyse, pas une mesure : vérifiez-le.</div>` : ''}
+              ${priceOpportunity && aiSaysNo ? `<div class="avis-shop">↳ L'analyse conclut de ne pas jouer, mais elle raisonnait sur ${po.ref.toFixed(2)} — pas sur les ${Number(m.cote).toFixed(2)} qui vous sont proposés. Son refus ne porte pas sur ce prix-ci.</div>` : ''}
+              ${(mGuard.ok && aiSaysNo && !priceOpportunity && m.value_pct >= 0) ? `<div class="avis-guard">⚠ Value calculée positive, mais l'analyse conclut de ne pas jouer — c'est sa conclusion qui prime.</div>` : ''}
               <div class="avis-text">${escapeHTML(m.avis || '')}</div>
               <div class="mycote-row">
                 <span class="mycote-lbl">Ta cote</span>

@@ -251,7 +251,8 @@ L'utilisateur veut une analyse complète de : « ${query} »
 1. Identifie précisément la rencontre (les données réelles ci-dessus font foi si présentes ; sinon Google Search). Si introuvable ou ambiguë, dis-le.
 2. Enquête complémentaire via Google Search UNIQUEMENT pour ce que les données réelles ne donnent pas : blessures/suspensions/compos probables (< 48 h), enjeu, fatigue/calendrier, météo/surface si sensible.
 3. Pour CHAQUE marché principal (1N2 ou vainqueur, double chance si pertinent, over/under principal, handicap principal) : estime la probabilité calibrée À PARTIR DES FAITS, trouve la cote actuelle chez ${ctx.bookmakers} (ne l'invente pas : si tu n'as pas de cote réelle récente, mets "cote_verifiee": false — elle sera revérifiée), calcule value = (probabilite × cote) − 1.
-4. Verdict global : le meilleur angle s'il existe (value ≥ 5 %), ou "à éviter" si rien ne se dégage — dis-le franchement.
+4. Verdict global : le meilleur angle si tu en vois un, ou "à éviter" si aucun marché ne t'inspire confiance.
+   N'applique AUCUN seuil chiffré de value : ce n'est pas ton rôle. Le système compare ensuite tes probabilités aux prix réellement disponibles, au modèle quantitatif et à l'historique mesuré — trois éléments dont tu ne disposes pas. Ton travail s'arrête à une probabilité honnête et à la qualité de ton information.
 
 Termine par un unique bloc \`\`\`json :
 \`\`\`json
@@ -276,7 +277,8 @@ Cette valeur ne sert PAS à calculer la value : le système la compare au prix r
 
 # COHÉRENCE — RÈGLE IMPÉRATIVE
 "jouable" doit refléter ta VRAIE conclusion sur ce marché. Sa seule fonction est d'empêcher une contradiction entre ton texte et le chiffre : ne mets JAMAIS "jouable": true sur un marché dont tu écris dans "avis" qu'il n'offre aucune marge, et inversement ne mets pas "jouable": false sur un marché que tu décris comme intéressant.
-Mets "jouable": false quand l'information te manque ou que tes éléments se contredisent. Ne le mets PAS simplement parce que l'avantage semble faible ou que le marché est efficient : c'est le système qui tranche ensuite, avec le modèle quantitatif et l'historique mesuré.`;
+Mets "jouable": false UNIQUEMENT pour une raison d'INFORMATION : composition inconnue, partant non annoncé, blessure non confirmée, sources qui se contredisent, échantillon inexploitable.
+Ne le mets JAMAIS pour une raison de PRIX ou de marge : « la value est faible », « le marché est efficient », « en dessous de 5 % », « pas assez de marge de sécurité » ne sont pas des motifs valables — ce sont des jugements que le système fait après toi, avec le prix réellement disponible que tu ne connais pas forcément. Un marché sur lequel tu as des faits solides et une probabilité assumée doit avoir "jouable": true, même si l'avantage te paraît mince.`;
   }
 
   /* ------------------------------------------------------------------

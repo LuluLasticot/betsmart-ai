@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v91';
+  const APP_VERSION = 'v92';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -2356,9 +2356,26 @@
       ses issues. Un bookmaker réel est TOUJOURS au-dessus de 100 % (c'est sa
       marge). En dessous, la donnée est fausse — cotes prises à des instants
       différents, ou attribuées au mauvais book. */
+  /** Nombre d'issues qu'un marché DOIT compter pour que sa marge soit calculable.
+      Sans ce contrôle, un 1N2 dont seules deux issues sur trois sont affichées
+      somme forcément sous 100 % et se fait signaler à tort comme incohérent —
+      c'est arrivé sur trois cartes d'affilée. La double chance est exclue :
+      ses trois options se recouvrent (1X + 12 + X2 somme à 2), sa marge n'a
+      donc aucun sens calculée ainsi. */
+  function expectedOutcomes(marche) {
+    const m = String(marche || '').toLowerCase();
+    if (/double chance/.test(m)) return null;
+    if (/1n2|1x2/.test(m)) return 3;
+    if (/moneyline|vainqueur|winner|over|under|total|plus de|moins de|handicap|spread|run line/.test(m)) return 2;
+    return null;
+  }
+
   function marketOverround(marches, marche) {
+    const need = expectedOutcomes(marche);
+    if (!need) return null;
     const sibs = (marches || []).filter((x) => String(x.marche || '') === String(marche || '') && Number(x.cote) > 1);
-    if (sibs.length < 2) return null;
+    // Marché incomplet : la somme ne veut rien dire, on ne juge pas.
+    if (sibs.length !== need) return null;
     return sibs.reduce((a, x) => a + 1 / Number(x.cote), 0);
   }
 

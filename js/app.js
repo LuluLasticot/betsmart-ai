@@ -27,7 +27,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v92';
+  const APP_VERSION = 'v93';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -655,15 +655,32 @@
     for (const b of state.bets) {
       if (!b.competition || (compSport && b.sport !== compSport)) continue;
       const key = betCompKey(b);
-      if (seenComp.has(key)) continue;
       const canon = Analytics.canonComp(b.competition);
+      if (seenComp.has(key)) { seenComp.get(key).n++; continue; }
       const meta = (b.country || '').trim()
         ? Analytics.countryMeta(b.country)
         : Analytics.compMeta(canon);
-      const suffix = meta && meta.region ? ` · ${meta.flag ? meta.flag + ' ' : ''}${meta.region}` : '';
-      seenComp.set(key, { value: key, label: canon + suffix });
+      const sport = (b.sport || 'Autre').trim() || 'Autre';
+      const region = (meta && meta.region) || '';
+      const flag = (meta && meta.flag) || '';
+      seenComp.set(key, {
+        value: key, name: canon, sport, region, flag, n: 1,
+        group: `${Analytics.sportIcon(sport)} ${sport}`
+      });
     }
-    const comps = [...seenComp.values()].sort((a, b) => a.label.localeCompare(b.label));
+    // Tri à trois niveaux : sport, puis pays, puis nom de compétition. Les
+    // compétitions sans pays identifié ferment la marche de leur groupe.
+    const comps = [...seenComp.values()]
+      .sort((a, b) =>
+        a.sport.localeCompare(b.sport, 'fr')
+        || (a.region ? 0 : 1) - (b.region ? 0 : 1)
+        || a.region.localeCompare(b.region, 'fr')
+        || a.name.localeCompare(b.name, 'fr'))
+      .map((c) => ({
+        value: c.value, group: c.group,
+        // Pays en tête : c'est le critère de tri, il doit être ce que l'œil suit.
+        label: `${c.flag ? c.flag + ' ' : ''}${c.region ? c.region + ' · ' : ''}${c.name} (${c.n})`
+      }));
     fillOptions('#filterCompetition', 'Compétition · toutes', comps);
     fillOptions('#filterBookmaker', 'Bookmaker · tous', [...new Set(state.bets.map((b) => b.bookmaker).filter(Boolean))].sort());
     const tipsters = [...new Set(state.bets.map((b) => b.tipster).filter(Boolean))].sort();
@@ -672,13 +689,33 @@
     $('#tipsterList').innerHTML = tipsters.map((t) => `<option>${escapeHTML(t)}</option>`).join('');
   }
 
-  /** Remplit un <select>. Accepte des chaînes ou des objets { value, label }. */
+  /** Remplit un <select>. Accepte des chaînes, ou des objets { value, label, group }.
+      Quand un `group` est fourni, les entrées sont regroupées en <optgroup> —
+      la seule hiérarchie qu'un select natif sache rendre, et qui reste lisible
+      sur mobile contrairement à une liste plate de trente compétitions. */
   function fillOptions(sel, placeholder, values) {
     const el = $(sel);
     const current = el.value;
     const norm = values.map((v) => (typeof v === 'string' ? { value: v, label: v } : v));
-    el.innerHTML = `<option value="">${placeholder}</option>`
-      + norm.map((v) => `<option value="${escapeHTML(v.value)}">${escapeHTML(v.label)}</option>`).join('');
+    let html = `<option value="">${placeholder}</option>`;
+
+    if (norm.some((v) => v.group)) {
+      const groups = new Map();
+      for (const v of norm) {
+        const g = v.group || '—';
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push(v);
+      }
+      for (const [g, items] of groups) {
+        html += `<optgroup label="${escapeHTML(g)}">`
+          + items.map((v) => `<option value="${escapeHTML(v.value)}">${escapeHTML(v.label)}</option>`).join('')
+          + '</optgroup>';
+      }
+    } else {
+      html += norm.map((v) => `<option value="${escapeHTML(v.value)}">${escapeHTML(v.label)}</option>`).join('');
+    }
+
+    el.innerHTML = html;
     if (norm.some((v) => v.value === current)) el.value = current;
   }
 

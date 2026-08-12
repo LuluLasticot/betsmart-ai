@@ -49,7 +49,8 @@ const Analytics = (() => {
       [/allsvenskan/, 'Allsvenskan'],
       [/eliteserien/, 'Eliteserien'],
       [/eredivisie/, 'Eredivisie'],
-      [/\bligapro\b|liga pro/, 'LigaPro'],
+      [/liga profesional|primera division argentina/, 'Liga Profesional (Argentine)'],
+      [/\bligapro\b|liga pro\b/, 'LigaPro'],
       [/\bk league\b|k[- ]?league/, 'K League'],
       [/tour de france/, 'Tour de France']
     ];
@@ -103,6 +104,7 @@ const Analytics = (() => {
     [/besta deild|urvalsdeild/, 'is', 'Islande'],
     [/k league/, 'kr', 'Corée du Sud'],
     [/\bmls\b/, 'us', 'États-Unis'],
+    [/liga profesional|primera division argentina/, 'ar', 'Argentine'],
     [/ligapro/, 'ec', 'Équateur'],
     [/ekstraklasa/, 'pl', 'Pologne'],
     // Basket / hockey / baseball nord-américains

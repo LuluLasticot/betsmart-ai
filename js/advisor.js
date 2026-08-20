@@ -394,6 +394,19 @@ Attribue aussi une qualité de dossier :
 # CONTEXTE UTILISATEUR
 Profil ${ctx.riskProfile} · Performance passée : ${ctx.userPerf}
 
+# DEUXIÈME LIVRABLE — LES PARIS DE CONVICTION (objectif DIFFÉRENT)
+En plus des picks ci-dessus, donne pour CHAQUE match analysé le pari sur lequel tu es le PLUS SÛR — celui que tu jouerais si on te demandait « quel est le résultat le plus probable ici ? ».
+
+Ne confonds pas les deux exercices :
+- Les "picks" cherchent une issue que le marché sous-estime.
+- Les "convictions" cherchent l'issue la PLUS PROBABLE, que le marché la connaisse ou non. Un favori évident est une conviction parfaitement valable.
+
+Règles propres aux convictions :
+- Tu n'es PAS limité aux issues listées : tu peux proposer n'importe quel marché courant (double chance, draw no bet, over/under, les deux marquent, handicap, buteur, nombre de sets ou de jeux au tennis, total de points…). Si tu choisis une issue de la liste, indique son "option_id" ; sinon mets "option_id": null et décris le marché dans "marche" et "selection".
+- Vise une probabilité RÉALISTE et calibrée : ne dis pas 95 % pour te rassurer. Une conviction honnête à 68 % vaut mieux qu'une conviction gonflée à 90 %.
+- Qualité "A" ou "B" exigée. Un seul pari de conviction par match, le plus solide.
+- Ne mentionne toujours AUCUNE cote : tu ne les connais pas et le système s'en charge.
+
 # SORTIE — termine par un unique bloc \`\`\`json :
 \`\`\`json
 {
@@ -402,6 +415,11 @@ Profil ${ctx.riskProfile} · Performance passée : ${ctx.userPerf}
     {"option_id":"1n2_1","proba_basse":0.52,"proba_mediane":0.58,"proba_haute":0.64,"qualite":"A","confiance":4,"verdict":"jouer",
      "analyse":"3-5 phrases FACTUELLES, chiffrées, issues de ta recherche.","risques":"1-2 phrases : ce qui invaliderait l'analyse.",
      "sources":["source 1 — ce qui a été vérifié","source 2 — confirmation indépendante"]}
+  ],
+  "convictions": [
+    {"match":"Équipe A – Équipe B","option_id":"1n2_1","marche":"Résultat (1N2)","selection":"Victoire Équipe A",
+     "proba_basse":0.60,"proba_mediane":0.68,"proba_haute":0.74,"qualite":"A","confiance":4,
+     "analyse":"2-4 phrases factuelles : pourquoi cette issue est la plus probable.","risques":"1 phrase."}
   ]
 }
 \`\`\`
@@ -420,8 +438,9 @@ Mets "jouer" dès que ton dossier tient debout, MÊME si l'avantage te paraît m
     const raw = await callGemini(apiKey, ctx.deepModel || model, marketsPrompt(ctx, candidates), { temperature: 0.25 });
     const parsed = extractJSON(raw);
     if (!parsed || !Array.isArray(parsed.picks)) throw new Error('Réponse du modèle illisible — réessayez.');
+    if (!Array.isArray(parsed.convictions)) parsed.convictions = []; // mode Conviction optionnel
     onProgress?.('done');
-    return parsed; // picks = [{option_id, probabilite, confiance, analyse, risques, sources}]
+    return parsed; // picks = value ; convictions = pari le plus probable par match
   }
 
   async function suggestFromCoteur(apiKey, model, ctx, candidates, onProgress) {
@@ -734,6 +753,26 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
     return Math.floor(v * f) / f;
   }
 
+  /* ------------------------------------------------------------------
+     MODE CONVICTION — staking à plat
+     Ici on ne cherche PAS de value : l'espérance reste négative de la marge
+     du book. Kelly est donc inapplicable (il recommanderait zéro). On mise
+     une fraction FIXE et basse de la bankroll, modulée par trois paliers de
+     conviction. Simple, honnête, et à variance maîtrisée.
+     ------------------------------------------------------------------ */
+  const CONVICTION_TIERS = { elevee: 1.5, bonne: 1.0, moderee: 0.6 };
+
+  function convictionStake(bankroll, pick, { pct = 0.5 } = {}) {
+    if (!(bankroll > 0)) return { stake: 0, pctBankroll: 0 };
+    const base = (Number(pct) || 0.5) / 100;
+    let fraction = base * (CONVICTION_TIERS[pick.conviction] || 1);
+    if (pick.cote_verifiee === false) fraction *= 0.5; // cote saisie à la main
+    return {
+      stake: roundStake(bankroll * fraction),
+      pctBankroll: Math.round(fraction * 1000) / 10
+    };
+  }
+
   function stakeFor(bankroll, pick, profileKey, mode = 'kelly') {
     const profile = PROFILES[profileKey] || PROFILES.equilibre;
     const b = pick.cote - 1;
@@ -768,5 +807,6 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
 
   return { suggest, suggestFromCoteur, suggestFromCoteurMarkets, analyzeMatch, listFixtures, stakeFor, radarStats,
     clvSegments, clvBlocklist, clvBlocked, oddsBand, leadBand, marketFamily,
+    convictionStake, CONVICTION_TIERS,
     feedbackBlock, setFallbackHandler, setWaitHandler, PROFILES };
 })();

@@ -11,7 +11,8 @@
   const DEFAULT_SETTINGS = () => ({
     initialBankroll: 500, apiKey: '', oddsApiKey: '', apiFootballKey: '', githubToken: '',
     oddsSource: 'coteur', model: 'gemini-2.5-flash', bookrolls: [], stakingMode: 'kelly',
-    maxExposurePct: 25, notifyAlerts: false, currency: 'EUR', showEurEquiv: true, freeTierGuard: false
+    maxExposurePct: 25, notifyAlerts: false, currency: 'EUR', showEurEquiv: true, freeTierGuard: false,
+    convictionStakePct: 0.5   // mode Conviction : mise à plat, en % de la bankroll globale
   });
   const state = {
     bets: [],
@@ -23,11 +24,12 @@
     charts: {},
     scanQueue: [],
     betsPage: 1,
+    radarMode: (() => { try { return localStorage.getItem('betsmart.radarMode') || 'value'; } catch (_) { return 'value'; } })(),
     selected: new Set(),      // ids des paris cochés (édition groupée)
     geminiModels: null
   };
 
-  const APP_VERSION = 'v93';
+  const APP_VERSION = 'v94';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -621,7 +623,7 @@
   /* ========================================================================
      Liste des paris
      ======================================================================== */
-  const FILTER_IDS = ['filterStatus', 'filterSport', 'filterCompetition', 'filterBookmaker', 'filterType', 'filterTipster'];
+  const FILTER_IDS = ['filterStatus', 'filterSport', 'filterCompetition', 'filterStrategy', 'filterBookmaker', 'filterType', 'filterTipster'];
 
   function bindFilters() {
     // Changer de filtre remet la sélection à zéro : on n'édite jamais en lot
@@ -727,12 +729,20 @@
     return canon + '\u241F' + country.toLowerCase();
   }
 
+  /** Stratégie d'un pari. Les paris antérieurs au mode Conviction n'ont pas le
+      champ : on les rattache à « value » s'ils viennent du Radar, sinon manuel. */
+  function betStrategy(b) {
+    if (b.strategy) return b.strategy;
+    return /radar/i.test(b.tipster || '') ? 'value' : 'manuel';
+  }
+
   function filteredBets() {
     const status = $('#filterStatus').value;
     const sport = $('#filterSport').value;
     const competition = $('#filterCompetition').value;
     const bookmaker = $('#filterBookmaker').value;
     const type = $('#filterType').value;
+    const strategy = $('#filterStrategy').value;
     const tipster = $('#filterTipster').value;
     const q = $('#filterSearch').value.trim().toLowerCase();
 
@@ -742,6 +752,7 @@
       (!competition || betCompKey(b) === competition) &&
       (!bookmaker || b.bookmaker === bookmaker) &&
       (!type || b.betType === type) &&
+      (!strategy || betStrategy(b) === strategy) &&
       (!tipster || b.tipster === tipster) &&
       (!q || `${b.event} ${b.selection} ${b.competition || ''} ${b.tipster || ''}`.toLowerCase().includes(q))
     );
@@ -1509,6 +1520,8 @@
       date: $('#fDate').value,
       time: $('#fTime').value || undefined,
       kickoff: Number($('#fKickoff').value) || undefined,
+      strategy: $('#fStrategy').value || 'value',   // 'value' | 'conviction' | 'manuel'
+      estProb: Number($('#fProb').value) || undefined,  // proba annoncée → mesure de calibration
       bookmaker: $('#fBookmaker').value.trim(),
       sport: $('#fSport').value.trim(),
       competition: $('#fCompetition').value.trim(),
@@ -2058,7 +2071,104 @@
     const finalPicks = strong.length ? strong.slice(0, 5) : unique.slice(0, 4);
     const marginalOnly = strong.length === 0 && finalPicks.length > 0;
 
-    return { analyse_marche: rawResult.analyse_marche || '', picks: finalPicks, coteurMarkets: true, marketWeight, marginalOnly, rejected };
+    return { analyse_marche: rawResult.analyse_marche || '', picks: finalPicks, coteurMarkets: true, marketWeight, marginalOnly, rejected,
+      convictions: mapConvictionPicks(rawResult, index) };
+  }
+
+  /* ------------------------------------------------------------------
+     MODE CONVICTION — objectif inverse du mode Value
+     On ne cherche pas un prix mal fixé mais l'issue la PLUS PROBABLE.
+     Le critère décisif est donc la CONCORDANCE avec le marché, pas l'écart :
+     quand le modèle et le marché disent la même chose, la conviction est
+     réelle ; quand le modèle s'emballe loin du prix, c'est presque toujours
+     lui qui a tort (backtest : −58 % de ROI sur les gros écarts annoncés).
+     ------------------------------------------------------------------ */
+  const CONV_MIN_PROB = 0.55;   // en dessous, ce n'est plus une conviction
+  const CONV_MAX_SPREAD = 0.20; // fourchette trop large = incertitude assumée
+  const CONV_MAX_GAP = 0.20;    // écart maximal toléré avec la probabilité du marché
+
+  function mapConvictionPicks(rawResult, index) {
+    const rows = Array.isArray(rawResult.convictions) ? rawResult.convictions : [];
+    if (!rows.length) return [];
+
+    // Index secondaire par libellé de match : les convictions peuvent porter
+    // sur un marché absent de coteur (buteur…), donc sans option_id.
+    const byMatch = new Map();
+    for (const info of Object.values(index)) {
+      const k = String(info.match || '').toLowerCase();
+      if (k && !byMatch.has(k)) byMatch.set(k, info);
+    }
+    const findMatch = (label) => {
+      const n = String(label || '').toLowerCase();
+      if (byMatch.has(n)) return byMatch.get(n);
+      for (const [k, v] of byMatch) if (k.includes(n) || n.includes(k)) return v;
+      return null;
+    };
+
+    const out = [];
+    for (const c of rows) {
+      const opt = c.option_id ? index[c.option_id] : null;   // issue cotée par coteur
+      const base = opt || findMatch(c.match);                 // sinon : contexte du match
+      if (!base) continue;
+
+      const low = Number(c.proba_basse), med = Number(c.proba_mediane), high = Number(c.proba_haute);
+      const p = (med > 0 && med < 1) ? med : low;
+      if (!(p > 0 && p < 1)) continue;
+      const grade = String(c.qualite || 'B').toUpperCase();
+      if (grade === 'C' || grade === 'D') continue;
+      if (p < CONV_MIN_PROB) continue;                        // pas assez probable
+      const spread = (high > 0 && low > 0) ? high - low : null;
+      if (spread != null && spread > CONV_MAX_SPREAD) continue; // trop incertain
+
+      // Concordance avec le marché — uniquement mesurable si l'issue est cotée
+      const fair = opt ? opt.fairProb : null;
+      const gap = (fair != null) ? Math.abs(p - fair) : null;
+      if (gap != null && gap > CONV_MAX_GAP) continue;         // le modèle délire
+
+      // Garde-fou quantitatif, identique au mode Value
+      if (opt && opt.anchor) {
+        try {
+          const g = Anchor.check(opt.anchor, opt.match, opt.marche, opt.selection, p);
+          if (!g.ok) continue;
+        } catch (_) { /* ancrage indisponible : on n'écarte pas */ }
+      }
+
+      // Trois paliers : plus la probabilité est haute, la fourchette serrée,
+      // le dossier solide et le marché d'accord, plus la conviction est forte.
+      const tight = spread == null || spread <= 0.12;
+      const agree = gap == null || gap <= 0.08;
+      const level = (grade === 'A' && p >= 0.68 && tight && agree) ? 'elevee'
+        : (p >= 0.60 && (spread == null || spread <= 0.16)) ? 'bonne'
+        : 'moderee';
+
+      out.push({
+        strategy: 'conviction',
+        sport: base.sport, competition: base.competition, match: base.match,
+        date_match: base.date_match, heure_match: base.heure_match, kickoff: base.kickoff,
+        marche: opt ? opt.marche : (c.marche || 'Autre'),
+        selection: opt ? opt.selection : (c.selection || ''),
+        cote: opt ? opt.cote : null,
+        cote_verifiee: !!opt,
+        bookmaker: opt ? opt.bookmaker : null,
+        probabilite: p, probaBasse: low > 0 ? low : null, probaHaute: high > 0 ? high : null,
+        probaMarche: fair, gapMarche: gap != null ? Math.round(gap * 1000) / 10 : null,
+        qualite: grade, conviction: level,
+        analyse: c.analyse || '', risques: c.risques || '',
+        coteurRef: opt ? { rencId: opt.rencId, optionId: opt.optionId } : null,
+        live: opt ? { prices: [{ book: opt.bookmaker, price: opt.cote }] } : null
+      });
+    }
+
+    // Un seul pari de conviction par match, les plus solides d'abord
+    const rank = { elevee: 3, bonne: 2, moderee: 1 };
+    out.sort((a, b) => (rank[b.conviction] - rank[a.conviction]) || (b.probabilite - a.probabilite));
+    const seen = new Set();
+    return out.filter((p) => {
+      const k = String(p.match).toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }).slice(0, 6);
   }
 
   function renderRadarProgress(step) {
@@ -2706,12 +2816,137 @@
     });
   }
 
+  /** Bascule Value / Conviction — les deux classements viennent de la MÊME
+      analyse, donc aucun appel API supplémentaire pour passer de l'un à l'autre. */
+  function radarModeSwitch(result) {
+    const nV = (result.picks || []).length;
+    const nC = (result.convictions || []).length;
+    if (!nC) return '';
+    const m = state.radarMode || 'value';
+    return `<div class="radar-mode">
+      <button class="rm-btn ${m === 'value' ? 'active' : ''}" data-rmode="value" title="Paris où le prix semble mal fixé — espérance de gain positive visée">Value <span>${nV}</span></button>
+      <button class="rm-btn ${m === 'conviction' ? 'active' : ''}" data-rmode="conviction" title="Paris où le modèle est le plus sûr du résultat, sans considération de prix">Conviction <span>${nC}</span></button>
+    </div>`;
+  }
+
+  function bindRadarMode(container, result, profileKey, bankroll, at) {
+    container.querySelectorAll('[data-rmode]').forEach((b) => b.addEventListener('click', () => {
+      state.radarMode = b.dataset.rmode;
+      try { localStorage.setItem('betsmart.radarMode', state.radarMode); } catch (_) {}
+      renderAdvisorResult(result, profileKey, bankroll, at);
+    }));
+  }
+
+  const CONV_LABEL = { elevee: 'conviction élevée', bonne: 'bonne conviction', moderee: 'conviction modérée' };
+
+  /** Rendu du mode Conviction. Volontairement DIFFÉRENT du mode Value :
+      aucune « value » n'est affichée — elle n'a pas de sens ici et l'afficher
+      laisserait croire à un avantage qui n'existe pas. */
+  function renderConvictionList(result, bankroll) {
+    const pct = Number(state.settings.convictionStakePct) || 0.5;
+    let html = `<div class="market-note" style="border-left-color:var(--amber)">
+      <strong>Mode Conviction.</strong> Ces paris visent l'issue la <strong>plus probable</strong>, pas le meilleur prix.
+      L'espérance reste négative de la marge du bookmaker : c'est un mode de sélection, pas une stratégie gagnante à long terme.
+      Mise à plat de <strong>${pct} %</strong> de bankroll (modulée par le niveau de conviction), suivie séparément de vos paris value.
+    </div>`;
+
+    html += (result.convictions || []).map((p, i) => {
+      const st = Advisor.convictionStake(bankroll, p, { pct });
+      const dateTxt = p.date_match
+        ? new Date(p.date_match + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }) + (p.heure_match ? ` · ${p.heure_match}` : '')
+        : '';
+      const badge = p.conviction === 'elevee' ? 'live' : p.conviction === 'bonne' ? '' : 'est';
+      const accord = p.gapMarche != null
+        ? `<span class="pick-value-badge ${p.gapMarche <= 8 ? 'live' : ''}" title="Écart entre la probabilité du modèle et celle du marché. Faible = les deux sont d'accord, c'est le signe d'une conviction solide.">marché ${p.gapMarche <= 8 ? 'd\'accord' : 'à ' + p.gapMarche + ' pts'}</span>`
+        : '';
+      const coteBloc = p.cote
+        ? `<div class="pick-num"><span class="l">Cote</span><span class="v">${Number(p.cote).toFixed(2)}</span></div>`
+        : `<div class="pick-num"><span class="l">Cote</span><span class="v">—</span></div>`;
+      const manual = p.cote ? '' : `<div class="manual-odds" data-conv="${i}">
+          <label>Marché non coté par coteur — saisissez votre cote :</label>
+          <input type="number" class="input mono conv-odds-input" data-idx="${i}" min="1.01" step="0.01" placeholder="ex 2.00">
+          <span class="manual-odds-result" data-idx="${i}">saisissez une cote →</span>
+        </div>`;
+
+      return `<div class="pick-card" data-conv-card="${i}">
+        <div class="pick-top">
+          <div class="pick-title">
+            <h3>${escapeHTML(p.match)}</h3>
+            <div class="pick-meta">${escapeHTML(p.sport || '')} · ${escapeHTML(p.competition || '')}${dateTxt ? ' · ' + dateTxt : ''}</div>
+          </div>
+          <div>
+            <span class="pick-value-badge ${badge}">${CONV_LABEL[p.conviction] || 'conviction'}</span>
+            <span class="pick-value-badge ${p.qualite === 'A' ? 'live' : ''}" title="Qualité du dossier">dossier ${escapeHTML(p.qualite)}${p.probaBasse && p.probaHaute ? ` · ${Math.round(p.probaBasse * 100)}–${Math.round(p.probaHaute * 100)} %` : ''}</span>
+            ${accord}
+            ${p.cote_verifiee ? '<span class="pick-value-badge live">✓ cote réelle</span>' : '<span class="pick-value-badge est">cote à saisir</span>'}
+          </div>
+        </div>
+        <div class="pick-selection">
+          <div class="sel">${escapeHTML(p.selection)}<small>${escapeHTML(p.marche || '')}${p.bookmaker ? ' · ' + escapeHTML(p.bookmaker) : ''}</small></div>
+          <div class="pick-numbers">
+            ${coteBloc}
+            <div class="pick-num"><span class="l">Proba. estimée</span><span class="v">${Math.round(p.probabilite * 100)} %</span></div>
+            <div class="pick-num"><span class="l">Mise conseillée</span><span class="v accent" data-conv-stake="${i}">${st.stake > 0 ? Stats.fmtMoney(st.stake) : '—'}</span></div>
+          </div>
+        </div>
+        ${manual}
+        <p class="pick-analysis">${escapeHTML(p.analyse || '')}</p>
+        ${p.risques ? `<p class="pick-risks"><strong>Risques :</strong> ${escapeHTML(p.risques)}</p>` : ''}
+        <div class="pick-footer">
+          <span class="pick-sources"></span>
+          <span><button class="btn-secondary" data-add-conv="${i}">Ajouter à mes paris</button></span>
+        </div>
+      </div>`;
+    }).join('');
+
+    return html;
+  }
+
+  function bindConvictionActions(container, result, bankroll) {
+    const pct = Number(state.settings.convictionStakePct) || 0.5;
+
+    // Saisie manuelle de cote (marchés hors coteur : buteur, sets…)
+    container.querySelectorAll('.conv-odds-input').forEach((inp) => {
+      const i = Number(inp.dataset.idx);
+      inp.addEventListener('input', () => {
+        const c = parseFloat(inp.value);
+        const p = result.convictions[i];
+        const res = container.querySelector(`.manual-odds-result[data-idx="${i}"]`);
+        const cell = container.querySelector(`[data-conv-stake="${i}"]`);
+        if (!(c > 1)) { p.manualCote = null; if (res) res.textContent = 'saisissez une cote →'; return; }
+        p.manualCote = c;
+        const st = Advisor.convictionStake(bankroll, { ...p, cote_verifiee: true }, { pct });
+        if (cell) cell.textContent = st.stake > 0 ? Stats.fmtMoney(st.stake) : '—';
+        if (res) res.innerHTML = `mise <strong>${Stats.fmtMoney(st.stake)}</strong> · gain potentiel ${Stats.fmtMoney(st.stake * c)}`;
+      });
+    });
+
+    container.querySelectorAll('[data-add-conv]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const p = result.convictions[Number(btn.dataset.addConv)];
+        const cote = p.manualCote || p.cote;
+        if (!(cote > 1)) { toast('Saisissez d\'abord la cote de votre bookmaker'); return; }
+        const st = Advisor.convictionStake(bankroll, { ...p, cote_verifiee: true }, { pct });
+        prefillBetFromPick({ ...p, cote, bookmaker: p.manualCote ? '' : p.bookmaker, strategy: 'conviction' }, st.stake);
+      });
+    });
+  }
+
   function renderAdvisorResult(result, profileKey, bankroll, at) {
     const container = $('#advisorContent');
     let html = '';
 
     if (at) {
       html += `<p class="empty-hint" style="margin-bottom:10px">Analyse du ${new Date(at).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</p>`;
+    }
+    html += radarModeSwitch(result);
+
+    // ---- Mode Conviction : rendu dédié, puis on s'arrête là ----
+    if (state.radarMode === 'conviction' && (result.convictions || []).length) {
+      container.innerHTML = html + renderConvictionList(result, bankroll);
+      bindRadarMode(container, result, profileKey, bankroll, at);
+      bindConvictionActions(container, result, bankroll);
+      return;
     }
     if (result.analyse_marche) {
       html += `<div class="market-note">${escapeHTML(result.analyse_marche)}</div>`;
@@ -2726,8 +2961,11 @@
     }
 
     if (!result.picks.length) {
-      html += '<div class="empty-state"><p><strong>Aucun angle exploitable</strong> sur la période — aucun match n\'offrait de piste suffisamment solide.</p><p class="empty-hint">Relancez plus tard ou élargissez la fenêtre à 72 h (plus de matchs à analyser).</p></div>';
+      html += '<div class="empty-state"><p><strong>Aucun angle exploitable</strong> sur la période — aucun match n\'offrait de piste suffisamment solide.</p><p class="empty-hint">Relancez plus tard ou élargissez la fenêtre à 72 h (plus de matchs à analyser).'
+        + ((result.convictions || []).length ? ' Le mode <strong>Conviction</strong> ci-dessus propose malgré tout les issues les plus probables du plateau.' : '')
+        + '</p></div>';
       container.innerHTML = html;
+      bindRadarMode(container, result, profileKey, bankroll, at);
       return;
     }
 
@@ -2811,6 +3049,7 @@
     const modeLabel = mode === 'flat' ? 'mise à plat' : 'Kelly fractionné';
     html += `<p class="empty-hint" style="text-align:center;margin-top:12px">Mises en ${modeLabel} (profil ${escapeHTML(Advisor.PROFILES[profileKey].label.toLowerCase())}), plafond d'exposition ${state.settings.maxExposurePct || 25} %, sur une bankroll de ${Stats.fmtMoney(bankroll)}.${wNote}</p>`;
     container.innerHTML = html;
+    bindRadarMode(container, result, profileKey, bankroll, at);
 
     container.querySelectorAll('[data-add-pick]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -2869,7 +3108,9 @@
     syncLegsField();
     $('#fOdds').value = p.cote || '';
     $('#fStake').value = stake || '';
-    $('#fTipster').value = 'Radar IA';
+    $('#fStrategy').value = p.strategy || 'value';
+    $('#fProb').value = (typeof p.probabilite === 'number') ? p.probabilite : '';
+    $('#fTipster').value = p.strategy === 'conviction' ? 'Radar Conviction' : 'Radar IA';
     $('#fStatus').value = 'pending';
     updatePotentialGain();
     toast('Pari pré-rempli — vérifiez la cote chez votre bookmaker');
@@ -3091,6 +3332,14 @@
       toast(on ? 'Alertes activées' : 'Alertes désactivées');
     });
 
+    $('#setConvictionStake').addEventListener('change', async () => {
+      const v = Math.min(5, Math.max(0.05, parseFloat($('#setConvictionStake').value) || 0.5));
+      state.settings.convictionStakePct = v;
+      $('#setConvictionStake').value = v;
+      await DB.setSetting('convictionStakePct', v);
+      toast(`Mode Conviction : mise à plat de ${v} % de bankroll`);
+    });
+
     $('#setStaking').addEventListener('change', async () => {
       state.settings.stakingMode = $('#setStaking').value;
       await DB.setSetting('stakingMode', state.settings.stakingMode);
@@ -3180,6 +3429,7 @@
     $('#setEurEquiv').checked = state.settings.showEurEquiv !== false;
     applyCurrencyUI();
     $('#setStaking').value = state.settings.stakingMode || 'kelly';
+    $('#setConvictionStake').value = state.settings.convictionStakePct ?? 0.5;
     $('#setMaxExposure').value = state.settings.maxExposurePct || 25;
     renderModelOptions();
     $('#setModel').value = state.settings.model;
@@ -3269,7 +3519,7 @@
      Analyse — page statistique complète
      ======================================================================== */
   const AN_TABS = [
-    ['overview', 'Vue d\'ensemble'], ['clv', 'CLV'], ['sport', 'Sport'], ['competition', 'Compétition'],
+    ['overview', 'Vue d\'ensemble'], ['clv', 'CLV'], ['strategy', 'Stratégie'], ['sport', 'Sport'], ['competition', 'Compétition'],
     ['bookmaker', 'Bookmaker'], ['type', 'Type & Tipster'], ['period', 'Période'],
     ['discipline', 'Discipline'], ['calendar', 'Calendrier'], ['ai', 'Bilan IA']
   ];
@@ -3293,7 +3543,7 @@
     if (!a.general.count) { c.innerHTML = '<div class="empty-state"><p>Ajoutez des paris pour voir vos statistiques ici.</p></div>'; return; }
 
     ({
-      overview: renderAnOverview, clv: renderAnClv, sport: renderAnSport, competition: renderAnCompetition,
+      overview: renderAnOverview, clv: renderAnClv, strategy: renderAnStrategy, sport: renderAnSport, competition: renderAnCompetition,
       bookmaker: renderAnBookmaker, type: renderAnType, period: renderAnPeriod,
       discipline: renderAnDiscipline, calendar: renderAnCalendar, ai: renderAnAI
     })[anState.tab](c, a);
@@ -3512,6 +3762,83 @@
           <div class="bet-num r ${rCls}">${rLbl}</div>
         </div>`;
       }).join('');
+  }
+
+  /* ------------------------------------------------------------------
+     Onglet Stratégie — sépare Value et Conviction.
+     Indispensable : mélanger les deux rendrait la mesure d'edge du Radar
+     ininterprétable. Et pour le mode Conviction, la CLV n'a aucun sens —
+     ce qui compte est la CALIBRATION (annoncer 70 %, gagner 70 % du temps)
+     et le fait de battre ou non la probabilité implicite des cotes jouées.
+     ------------------------------------------------------------------ */
+  const STRAT_LABEL = { value: 'Value (Radar)', conviction: 'Conviction', manuel: 'Saisie manuelle' };
+
+  function renderAnStrategy(c) {
+    const settled = state.bets.filter(Stats.isCounted);
+    if (!settled.length) {
+      c.innerHTML = '<div class="empty-state"><p>Aucun pari réglé pour l\'instant.</p><p class="empty-hint">Cet onglet comparera vos deux approches dès que des paris seront réglés : le <strong>Value</strong> (battre le prix) et la <strong>Conviction</strong> (viser l\'issue la plus probable).</p></div>';
+      return;
+    }
+    const groups = {};
+    settled.forEach((b) => { const k = betStrategy(b); (groups[k] = groups[k] || []).push(b); });
+
+    const rows = Object.entries(groups).map(([k, list]) => {
+      const blk = Analytics.block(list);
+      const withProb = list.filter((b) => typeof b.estProb === 'number');
+      const annonce = withProb.length ? withProb.reduce((s, b) => s + b.estProb, 0) / withProb.length * 100 : null;
+      const implicite = list.reduce((s, b) => s + (Number(b.odds) > 1 ? 100 / Number(b.odds) : 0), 0) / list.length;
+      return { key: k, ...blk, annonce, implicite };
+    }).sort((a, b) => b.count - a.count);
+
+    const cls = (n) => (n > 0.001 ? 'pos' : n < -0.001 ? 'neg' : 'zero');
+    c.innerHTML = `
+      <div class="market-note">Les deux approches n'ont pas le même objectif et ne se jugent pas de la même façon.
+      Le <strong>Value</strong> se juge à la CLV (onglet dédié) : bat-il le prix ? La <strong>Conviction</strong> se juge à la calibration :
+      quand le modèle annonce 70 %, gagne-t-il vraiment 70 % du temps ? Et fait-il mieux que la probabilité implicite des cotes jouées ?</div>
+      <div class="panel"><div class="panel-head"><h2>Comparaison des stratégies</h2></div>
+        <div class="col-headers strat-grid"><span>Stratégie</span><span class="r">Paris</span><span class="r hide-m">Mise</span><span class="r">Bénéfice</span><span class="r">ROI</span><span class="r">Réussite</span><span class="r hide-m">Cote moy.</span></div>
+        ${rows.map((r) => `<div class="bet-row strat-grid">
+          <div class="bet-main"><div class="bet-event">${escapeHTML(STRAT_LABEL[r.key] || r.key)}</div></div>
+          <div class="bet-num r">${r.count}</div>
+          <div class="bet-num r hide-m">${Stats.fmtMoney(r.totalStake)}</div>
+          <div class="bet-profit r ${cls(r.totalProfit)}">${Stats.fmtSigned(r.totalProfit)}</div>
+          <div class="bet-num r ${cls(r.roi)}">${r.roi >= 0 ? '+' : ''}${r.roi.toFixed(1)} %</div>
+          <div class="bet-num r">${r.hitRate.toFixed(0)} %</div>
+          <div class="bet-num r hide-m">${r.avgOdds.toFixed(2)}</div>
+        </div>`).join('')}
+      </div>
+      ${convictionCalibHTML(groups.conviction || [])}`;
+  }
+
+  /** Calibration du mode Conviction + benchmark « probabilité implicite ». */
+  function convictionCalibHTML(list) {
+    if (!list.length) {
+      return '<div class="market-note" style="border-left-color:var(--amber)">Aucun pari <strong>Conviction</strong> réglé pour l\'instant — la calibration de ce mode apparaîtra ici.</div>';
+    }
+    const withProb = list.filter((b) => typeof b.estProb === 'number');
+    const won = list.filter((b) => b.status === 'won').length;
+    const real = (won / list.length) * 100;
+    const annonce = withProb.length ? withProb.reduce((s, b) => s + b.estProb, 0) / withProb.length * 100 : null;
+    const implicite = list.reduce((s, b) => s + (Number(b.odds) > 1 ? 100 / Number(b.odds) : 0), 0) / list.length;
+    const gapAnnonce = annonce != null ? real - annonce : null;
+    const gapMarche = real - implicite;
+    const small = list.length < 20;
+
+    return `<div class="panel"><div class="panel-head"><h2>Calibration du mode Conviction</h2></div>
+      <div class="kpi-grid" style="margin-bottom:12px">
+        ${kpiCard('Réussite réelle', real.toFixed(0) + ' %', '', `sur ${list.length} pari${list.length > 1 ? 's' : ''} réglé${list.length > 1 ? 's' : ''}`)}
+        ${kpiCard('Probabilité annoncée', annonce != null ? annonce.toFixed(0) + ' %' : '—', '', 'moyenne des estimations du modèle')}
+        ${kpiCard('Écart de calibration', gapAnnonce != null ? (gapAnnonce >= 0 ? '+' : '') + gapAnnonce.toFixed(0) + ' pts' : '—',
+          gapAnnonce == null ? '' : Math.abs(gapAnnonce) <= 5 ? 'pos' : 'neg',
+          gapAnnonce == null ? 'proba non enregistrée' : gapAnnonce < -5 ? 'le modèle se surestime' : gapAnnonce > 5 ? 'le modèle se sous-estime' : 'bien calibré')}
+        ${kpiCard('vs marché', (gapMarche >= 0 ? '+' : '') + gapMarche.toFixed(0) + ' pts', gapMarche > 0 ? 'pos' : 'neg', `proba implicite des cotes : ${implicite.toFixed(0)} %`)}
+      </div>
+      <p class="calib-note">${small
+        ? `<strong>Échantillon encore trop faible</strong> (${list.length} paris) : ces chiffres ne veulent pas dire grand-chose avant une vingtaine de paris réglés.`
+        : gapMarche > 0
+          ? '<strong>Le mode fait mieux que le marché</strong> sur les cotes jouées : votre taux de réussite dépasse la probabilité implicite. Attention, cela ne signifie pas rentabilité — la marge du book reste à couvrir.'
+          : '<strong>Le mode ne bat pas la probabilité implicite</strong> des cotes jouées : l\'analyse n\'apporte pas d\'information au-delà de ce que le prix disait déjà.'}</p>
+    </div>`;
   }
 
   function renderAnClv(c) {

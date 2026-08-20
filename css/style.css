@@ -1479,3 +1479,15 @@ kbd {
 .verdict-badge.shop { background: var(--accent-dim); color: var(--accent); margin-right: 6px; }
 
 .verdict-badge.shop-weak { background: var(--surface-2); color: var(--text-dim); margin-right: 6px; }
+
+/* Bascule Value / Conviction du Radar */
+.radar-mode { display: inline-flex; gap: 3px; padding: 3px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.rm-btn { padding: 6px 14px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--text-2); font: 500 13px var(--font); cursor: pointer; transition: all .15s var(--ease); }
+.rm-btn span { font: 600 11px var(--mono); opacity: .65; margin-left: 5px; }
+.rm-btn:hover { color: var(--text); }
+.rm-btn.active { background: var(--surface-3); color: var(--text); }
+.rm-btn.active span { color: var(--accent); opacity: 1; }
+.strat-grid, .col-headers.strat-grid { grid-template-columns: minmax(0,1fr) 60px 88px 96px 76px 76px 84px; }
+@media (max-width: 720px) { .strat-grid, .col-headers.strat-grid { grid-template-columns: minmax(0,1fr) 54px 90px 68px 68px; } }

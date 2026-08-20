@@ -200,6 +200,12 @@
           <select id="filterSport" class="select"><option value="">Sport · tous</option></select>
           <select id="filterCompetition" class="select"><option value="">Compétition · toutes</option></select>
           <select id="filterBookmaker" class="select"><option value="">Bookmaker · tous</option></select>
+          <select id="filterStrategy" class="select">
+            <option value="">Stratégie · toutes</option>
+            <option value="value">Value (Radar)</option>
+            <option value="conviction">Conviction</option>
+            <option value="manuel">Saisie manuelle</option>
+          </select>
           <select id="filterType" class="select">
             <option value="">Type · tous</option>
             <option value="simple">Simple</option>
@@ -413,6 +419,11 @@
             <p class="field-hint">Kelly maximise la croissance long terme mais mise plus quand la value est forte ; la mise à plat pose la même fraction à chaque pari (moins de variance, plus prudent face à l'incertitude des probas).</p>
           </div>
           <div class="field">
+            <label for="setConvictionStake">Mode Conviction — mise à plat (% de bankroll)</label>
+            <input type="number" id="setConvictionStake" class="input mono" min="0.05" max="5" step="0.05" placeholder="0.5">
+            <p class="field-hint">S'applique aux paris du mode <strong>Conviction</strong> (issue la plus probable, sans recherche de value). Kelly n'y est pas applicable : sans avantage sur le prix, il recommanderait une mise nulle. La fraction est modulée par le niveau de conviction (×1,5 / ×1 / ×0,6).</p>
+          </div>
+          <div class="field">
             <label for="setMaxExposure">Exposition simultanée max (% de la bankroll)</label>
             <input type="number" id="setMaxExposure" class="input mono" min="5" max="100" step="1" placeholder="25">
             <p class="field-hint">Plafonne le total misé sur vos paris en cours + les picks du Radar. Au-delà, les mises conseillées sont réduites proportionnellement.</p>
@@ -582,6 +593,8 @@
       <form id="betForm" class="bet-form">
         <input type="hidden" id="betId">
         <input type="hidden" id="fKickoff">
+        <input type="hidden" id="fStrategy">
+        <input type="hidden" id="fProb">
         <div class="form-grid">
           <div class="field">
             <label for="fDate">Date</label>

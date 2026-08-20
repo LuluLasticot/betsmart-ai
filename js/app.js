@@ -29,7 +29,7 @@
     geminiModels: null
   };
 
-  const APP_VERSION = 'v94';
+  const APP_VERSION = 'v95';
 
   /** Devises déclarées sur les bookmakers (pour précharger les cours). */
   const bookCurrencies = () => (state.settings.bookrolls || []).map((b) => b.currency).filter(Boolean);
@@ -1569,7 +1569,7 @@
 
     // Garde anti-corrélation : deux paris en cours sur le même match ne sont pas indépendants
     if (!existing && bet.event) {
-      const nrm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
+      const nrm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
       const ev = nrm(bet.event);
       const corr = ev && state.bets.find((b) => (b.status === 'pending' || !b.status) && nrm(b.event) === ev);
       if (corr && !confirm(`⚠️ Tu as déjà un pari en cours sur ce match (« ${corr.selection} »). Deux paris sur la même rencontre sont corrélés : le risque se cumule au lieu de se diversifier.\n\nEnregistrer quand même ?`)) return;
@@ -2657,6 +2657,94 @@
     </div>`;
   }
 
+  /* ------------------------------------------------------------------
+     Pari de conviction sur une rencontre analysée individuellement.
+     Même logique que le mode Conviction du scan : l'issue la plus PROBABLE,
+     sans considération de prix — et donc affichée séparément de la value
+     pour qu'aucune confusion ne soit possible entre les deux approches.
+     ------------------------------------------------------------------ */
+  function matchConvictionHTML(r, bankroll) {
+    const c = r.conviction;
+    if (!c) return '';
+    const pct = Number(state.settings.convictionStakePct) || 0.5;
+    // Si l'issue correspond à un marché déjà coté dans l'analyse, on récupère la cote
+    const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const known = (r.marches || []).find((m) => m.cote_verifiee !== false && norm(m.selection) === norm(c.selection));
+    const cote = known ? known.cote : null;
+    const st = Advisor.convictionStake(bankroll, { conviction: c.conviction, cote_verifiee: !!cote }, { pct });
+    const badge = c.conviction === 'elevee' ? 'live' : c.conviction === 'bonne' ? '' : 'est';
+
+    return `<div class="pick-card conv-card" style="margin-top:16px">
+      <div class="pick-top">
+        <div class="pick-title">
+          <h3>Pari de conviction</h3>
+          <div class="pick-meta">L'issue la plus <strong>probable</strong> selon le modèle — indépendamment du prix. Espérance négative de la marge du book : c'est un mode de sélection, pas une stratégie gagnante.</div>
+        </div>
+        <div>
+          <span class="pick-value-badge ${badge}">${CONV_LABEL[c.conviction] || 'conviction'}</span>
+          <span class="pick-value-badge ${c.qualite === 'A' ? 'live' : ''}">dossier ${escapeHTML(c.qualite)}${c.probaBasse && c.probaHaute ? ` · ${Math.round(c.probaBasse * 100)}–${Math.round(c.probaHaute * 100)} %` : ''}</span>
+          ${cote ? '<span class="pick-value-badge live">✓ cote réelle</span>' : '<span class="pick-value-badge est">cote à saisir</span>'}
+        </div>
+      </div>
+      <div class="pick-selection">
+        <div class="sel">${escapeHTML(c.selection)}<small>${escapeHTML(c.marche || '')}</small></div>
+        <div class="pick-numbers">
+          <div class="pick-num"><span class="l">Cote</span><span class="v">${cote ? Number(cote).toFixed(2) : '—'}</span></div>
+          <div class="pick-num"><span class="l">Proba. estimée</span><span class="v">${Math.round(c.probabilite * 100)} %</span></div>
+          <div class="pick-num"><span class="l">Mise conseillée</span><span class="v accent" id="mConvStake">${st.stake > 0 ? Stats.fmtMoney(st.stake) : '—'}</span></div>
+        </div>
+      </div>
+      ${cote ? '' : `<div class="manual-odds">
+        <label>Marché non coté ici — saisissez la cote de votre bookmaker :</label>
+        <input type="number" class="input mono manual-odds-input" id="mConvOdds" min="1.01" step="0.01" placeholder="ex 2.00">
+        <span class="manual-odds-result" id="mConvRes">saisissez une cote →</span>
+      </div>`}
+      <p class="pick-analysis">${escapeHTML(c.analyse || '')}</p>
+      ${c.risques ? `<p class="pick-risks"><strong>Risques :</strong> ${escapeHTML(c.risques)}</p>` : ''}
+      <div class="pick-footer"><span class="pick-sources"></span>
+        <span><button class="btn-secondary" id="mConvBet">Ajouter à mes paris</button></span>
+      </div>
+    </div>`;
+  }
+
+  function bindMatchConviction(container, r, bankroll) {
+    const c = r.conviction;
+    if (!c) return;
+    const pct = Number(state.settings.convictionStakePct) || 0.5;
+    const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+    const known = (r.marches || []).find((m) => m.cote_verifiee !== false && norm(m.selection) === norm(c.selection));
+    let cote = known ? known.cote : null;
+
+    const input = container.querySelector('#mConvOdds');
+    if (input) {
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        const res = container.querySelector('#mConvRes');
+        const cell = container.querySelector('#mConvStake');
+        if (!(v > 1)) { cote = null; if (res) res.textContent = 'saisissez une cote →'; return; }
+        cote = v;
+        const st = Advisor.convictionStake(bankroll, { conviction: c.conviction, cote_verifiee: true }, { pct });
+        if (cell) cell.textContent = Stats.fmtMoney(st.stake);
+        if (res) res.innerHTML = `mise <strong>${Stats.fmtMoney(st.stake)}</strong> · gain potentiel ${Stats.fmtMoney(st.stake * v)}`;
+      });
+    }
+
+    const btn = container.querySelector('#mConvBet');
+    if (btn) {
+      btn.addEventListener('click', () => {
+        if (!(cote > 1)) { toast('Saisissez d\'abord la cote de votre bookmaker'); return; }
+        const st = Advisor.convictionStake(bankroll, { conviction: c.conviction, cote_verifiee: true }, { pct });
+        prefillBetFromPick({
+          date_match: r.date_match, heure_match: r.heure_match, kickoff: r.kickoff,
+          sport: r.sport, competition: r.competition, match: r.match,
+          marche: c.marche, selection: c.selection, cote,
+          bookmaker: known ? known.bookmaker : '',
+          probabilite: c.probabilite, strategy: 'conviction'
+        }, st.stake);
+      });
+    }
+  }
+
   function renderMatchAnalysis(r, ctx) {
     const container = $('#advisorContent');
     if (!r.trouve) {
@@ -2767,7 +2855,10 @@
       </div>
       ${r.risques ? `<p class="pick-risks" style="margin-top:12px"><strong>Risques :</strong> ${escapeHTML(r.risques)}</p>` : ''}
       <div class="pick-footer"><span class="pick-sources">${(r.sources || []).slice(0, 3).map(escapeHTML).join(' · ')}</span></div>
-    </div>`;
+    </div>
+    ${matchConvictionHTML(r, k.bankroll)}`;
+
+    bindMatchConviction(container, r, k.bankroll);
 
     // Changement de profil Kelly → on ré-affiche l'analyse avec les mises recalculées (sans rappeler l'IA)
     const profSel = container.querySelector('#matchProfile');

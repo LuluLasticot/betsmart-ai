@@ -265,11 +265,18 @@ Termine par un unique bloc \`\`\`json :
     {"marche": "1N2", "selection": "…", "cote": 1.85, "cote_verifiee": true, "bookmaker": "…", "cote_marche": 1.80, "probabilite": 0.55, "value_pct": 1.8, "jouable": false, "avis": "1 phrase"}
   ],
   "meilleur_marche": "libellé du marché retenu ou null",
+  "conviction": {"marche": "Buteur", "selection": "…", "proba_basse": 0.58, "proba_mediane": 0.64, "proba_haute": 0.70, "qualite": "A", "analyse": "2-3 phrases factuelles.", "risques": "1 phrase."},
   "risques": "1-2 phrases.",
   "sources": ["site — ce qui a été vérifié"]
 }
 \`\`\`
 Ne force JAMAIS un verdict "a_jouer" : la plupart des matchs ne présentent aucune value exploitable.
+
+# LE PARI DE CONVICTION — objectif DIFFÉRENT du reste
+Le champ "conviction" répond à une autre question : « quel est le résultat le plus PROBABLE de ce match ? », sans aucune considération de prix ni de value. Un favori évident est une réponse parfaitement valable.
+- Tu n'es pas limité aux marchés listés ci-dessus : buteur, nombre de sets ou de jeux, total de points, handicap, double chance… tout marché courant est admis.
+- Donne une fourchette de probabilité HONNÊTE et une qualité de dossier ("A" ou "B"). Ne gonfle pas : une conviction à 68 % bien étayée vaut mieux qu'un 90 % de confort.
+- Si aucune issue ne te paraît réellement probable (> 55 %) avec un dossier solide, mets "conviction": null. C'est une réponse valide.
 
 # PRIX DE MARCHÉ — "cote_marche"
 Pour chaque marché, indique en plus la cote CONSENSUS que tu observes chez la majorité des books (pas la meilleure, la plus courante). Si tu ne la trouves pas de source récente, mets null plutôt que d'estimer.
@@ -508,6 +515,30 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
       .slice(0, 40);
   }
 
+  /** Valide et gradue un pari de conviction (analyse d'une rencontre).
+      Mêmes seuils que le mode Conviction du scan global, pour que les deux
+      chemins produisent des paris comparables. */
+  function normalizeConviction(c) {
+    if (!c || typeof c !== 'object') return null;
+    const low = Number(c.proba_basse), med = Number(c.proba_mediane), high = Number(c.proba_haute);
+    const p = (med > 0 && med < 1) ? med : low;
+    if (!(p >= 0.55 && p < 1)) return null;                    // pas assez probable
+    const grade = String(c.qualite || 'B').toUpperCase();
+    if (grade !== 'A' && grade !== 'B') return null;            // dossier insuffisant
+    const spread = (high > 0 && low > 0) ? high - low : null;
+    if (spread != null && spread > 0.20) return null;           // trop incertain
+    const tight = spread == null || spread <= 0.12;
+    return {
+      strategy: 'conviction',
+      marche: c.marche || 'Autre', selection: c.selection || '',
+      probabilite: p, probaBasse: low > 0 ? low : null, probaHaute: high > 0 ? high : null,
+      qualite: grade,
+      conviction: (grade === 'A' && p >= 0.68 && tight) ? 'elevee'
+        : (p >= 0.60 && (spread == null || spread <= 0.16)) ? 'bonne' : 'moderee',
+      analyse: c.analyse || '', risques: c.risques || ''
+    };
+  }
+
   async function analyzeMatch(apiKey, model, ctx, query) {
     const raw = await callGemini(apiKey, ctx.deepModel || model, matchPrompt(ctx, query), { temperature: 0.25 });
     const parsed = extractJSON(raw);
@@ -515,6 +546,7 @@ Maximum 40 matchs, triés par heure croissante. Si aucun match fiable, renvoie {
     parsed.marches = (parsed.marches || [])
       .filter((m) => m && typeof m.cote === 'number' && typeof m.probabilite === 'number')
       .map((m) => ({ ...m, value_pct: Math.round((m.probabilite * m.cote - 1) * 1000) / 10 }));
+    parsed.conviction = normalizeConviction(parsed.conviction);
     return parsed;
   }
 
